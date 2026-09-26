@@ -11,7 +11,11 @@ export type PgTarget = {
   ssl: SslMode;
   /** PEM of the CA for the verify modes, when the system doesn't already trust it. */
   ca_cert: string | null;
+  /** Reach the server through this SSH host (system ssh: keys, agent, ~/.ssh/config). */
+  ssh?: SshTunnel | null;
 };
+
+export type SshTunnel = { host: string; port: number | null; user: string | null; identity_file: string | null };
 
 export type Target = ({ engine: "postgres" } & PgTarget) | { engine: "sqlite"; path: string };
 

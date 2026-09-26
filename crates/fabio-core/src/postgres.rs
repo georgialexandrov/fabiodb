@@ -40,6 +40,9 @@ pub struct PgTarget {
     pub database: String,
     #[serde(default)]
     pub ssl: SslMode,
+    /// Reach the server through this SSH host; `host`/`port` are then as seen from it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssh: Option<crate::SshTunnel>,
     /// PEM file of the CA that signed the server's certificate, for the verify
     /// modes when it isn't a CA the system already trusts (libpq's sslrootcert).
     #[serde(default)]
@@ -70,6 +73,7 @@ impl PgTarget {
                 _ => SslMode::Prefer,
             }),
             ca_cert,
+            ssh: None,
         })
     }
 }
@@ -133,16 +137,24 @@ fn tls_connector(target: &PgTarget) -> Result<postgres_native_tls::MakeTlsConnec
 
 pub struct Pg {
     client: Client,
+    /// Kept open as long as this connection lives.
+    _tunnel: Option<std::sync::Arc<crate::tunnel::Tunnel>>,
     /// Kept for cancel requests, which open their own connection.
     tls: postgres_native_tls::MakeTlsConnector,
 }
 
 impl Pg {
     pub async fn connect(target: &PgTarget) -> Result<Pg> {
+        // Through SSH: connect to the tunnel's local end, but keep `host` as the
+        // name TLS checks the certificate against.
+        let tunnel = match &target.ssh {
+            Some(ssh) => Some(crate::tunnel::open(ssh, &target.host, target.port).await?),
+            None => None,
+        };
         let mut config = tokio_postgres::Config::new();
         config
             .host(&target.host)
-            .port(target.port)
+            .port(tunnel.as_ref().map_or(target.port, |t| t.local_port))
             .user(&target.user)
             .dbname(&target.database)
             .application_name("fabio")
@@ -155,6 +167,9 @@ impl Pg {
                 SslMode::Prefer => tokio_postgres::config::SslMode::Prefer,
                 SslMode::Require | SslMode::VerifyCa | SslMode::VerifyFull => tokio_postgres::config::SslMode::Require,
             });
+        if tunnel.is_some() {
+            config.hostaddr(std::net::IpAddr::from([127, 0, 0, 1]));
+        }
         if let Some(password) = &target.password {
             config.password(password);
         }
@@ -171,7 +186,7 @@ impl Pg {
                 tz.replace('\'', "''")
             ))
             .await?;
-        Ok(Pg { client, tls })
+        Ok(Pg { client, tls, _tunnel: tunnel })
     }
 
     pub async fn query(&self, sql: &str, max_rows: usize) -> Result<QueryResult> {

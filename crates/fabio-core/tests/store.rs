@@ -19,6 +19,7 @@ fn pg(password: Option<&str>) -> SavedConnection {
             database: "app".into(),
             ssl: SslMode::Prefer,
             ca_cert: None,
+            ssh: None,
         }),
         agent: false,
         group: None,

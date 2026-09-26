@@ -90,6 +90,7 @@ fn compose_services(
                 // Local containers don't serve TLS unless configured to.
                 ssl: SslMode::Disable,
                 ca_cert: None,
+                ssh: None,
             }),
             source: file.display().to_string(),
             note: published.is_none().then(|| {

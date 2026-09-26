@@ -168,6 +168,77 @@ export function ConnectionForm({ initial, groups, onSaved, onDeleted, onClose }:
                 </select>
               </label>
             </div>
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={!!t.ssh}
+                onChange={(e) =>
+                  setTarget({ ssh: e.target.checked ? { host: "", port: null, user: null, identity_file: null } : null })
+                }
+              />
+              <span>
+                Connect through SSH
+                <span className="hint-inline"> — with your ssh keys, agent and ~/.ssh/config</span>
+              </span>
+            </label>
+            {t.ssh && (
+              <>
+                <div className="row">
+                  <label className="grow">
+                    SSH host
+                    <input
+                      spellCheck={false}
+                      placeholder="bastion.example.com or an ssh config alias"
+                      value={t.ssh.host}
+                      onChange={(e) => setTarget({ ssh: { ...t.ssh!, host: e.target.value } })}
+                    />
+                  </label>
+                  <label className="port">
+                    Port
+                    <input
+                      inputMode="numeric"
+                      placeholder="22"
+                      value={t.ssh.port ?? ""}
+                      onChange={(e) => setTarget({ ssh: { ...t.ssh!, port: Number(e.target.value.replace(/\D/g, "")) || null } })}
+                    />
+                  </label>
+                  <label className="grow">
+                    SSH user
+                    <input
+                      spellCheck={false}
+                      placeholder="from ~/.ssh/config"
+                      value={t.ssh.user ?? ""}
+                      onChange={(e) => setTarget({ ssh: { ...t.ssh!, user: e.target.value || null } })}
+                    />
+                  </label>
+                </div>
+                <div className="row">
+                  <label className="grow">
+                    Key file
+                    <input
+                      spellCheck={false}
+                      placeholder="ssh’s default keys and agent"
+                      value={t.ssh.identity_file ?? ""}
+                      onChange={(e) => setTarget({ ssh: { ...t.ssh!, identity_file: e.target.value || null } })}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    className="align-end"
+                    onClick={async () => {
+                      const path = await open({ multiple: false, directory: false });
+                      if (typeof path === "string") setTarget({ ssh: { ...t.ssh!, identity_file: path } });
+                    }}
+                  >
+                    Choose…
+                  </button>
+                </div>
+                <p className="hint-inline">
+                  Host and port above are as seen from the SSH host (often localhost). Keys or agent only: ssh runs
+                  without prompts.
+                </p>
+              </>
+            )}
             {t.ssl.startsWith("verify") && (
               <div className="row">
                 <label className="grow">
