@@ -20,3 +20,4 @@ serde_json = "1"
 tauri-plugin-dialog = "2.7.3"
 tokio = { version = "1.53.1", features = ["sync"] }
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+tauri-plugin-window-state = "2"

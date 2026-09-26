@@ -472,6 +472,8 @@ pub fn run() {
     STARTED.get_or_init(Instant::now);
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        // Window size and position come back where they were.
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .menu(menu::build)
         .on_menu_event(|app, event| menu::forward(app, event.id().as_ref()))
         .setup(|app| {

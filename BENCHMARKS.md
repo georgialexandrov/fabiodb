@@ -43,3 +43,12 @@ Notes:
 
 The check now fails on start > 300 ms or bundle > 20 MB. A run right after a
 build can land on 300 ms; rerun before treating it as a regression.
+
+## 2026-09-26 — v0.1 features (switcher, ⌘K, editing, menu, window state)
+
+| Metric | Result | Budget | |
+|---|---|---|---|
+| Cold start, median of 15 | 284 ms (max 300) | < 300 ms | ✅ unchanged |
+| Idle memory, RSS | 205 MB | < 150 MB | reported only |
+| Bundle | 8.2 MB | < 20 MB | ✅ |
+| JS main | 341 KB | — | up from 306 KB; lazy-load the dialogs next |

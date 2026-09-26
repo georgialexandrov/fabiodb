@@ -42,6 +42,21 @@ const AGENT_RECENT_MS = 10 * 60_000;
 
 let nextTab = 1;
 
+/** Tabs and the workspace in use, kept between launches ("where you left it"). */
+const LAYOUT_KEY = "fabio.layout";
+type Layout = { activeId: string | null; tabs: Tab[]; activeTab: Record<string, string | null> };
+
+function savedLayout(): Layout | null {
+  try {
+    const layout: Layout | null = JSON.parse(localStorage.getItem(LAYOUT_KEY) ?? "null");
+    if (!layout || !Array.isArray(layout.tabs)) return null;
+    for (const t of layout.tabs) nextTab = Math.max(nextTab, Number(t.id.slice(1)) + 1 || 0);
+    return layout;
+  } catch {
+    return null;
+  }
+}
+
 export default function App() {
   const [connections, setConnections] = useState<SavedConnection[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -71,8 +86,32 @@ export default function App() {
   useEffect(() => applyTheme(theme), [theme]);
 
   useEffect(() => {
-    api.listConnections().then(setConnections, (e) => setError(String(e)));
+    api.listConnections().then(
+      (all) => {
+        setConnections(all);
+        // Put tabs back, and reconnect the workspace that was in use; the
+        // others connect when you switch to them.
+        const layout = savedLayout();
+        if (!layout) return;
+        const known = (id: string) => all.some((c) => c.id === baseId(id));
+        setTabs(layout.tabs.filter((t) => known(t.connectionId)).map((t) => (t.kind === "query" ? { ...t, autorun: undefined } : t)));
+        setActiveTab(layout.activeTab ?? {});
+        const conn = layout.activeId && known(layout.activeId) ? all.find((c) => c.id === baseId(layout.activeId!)) : null;
+        if (conn) activate(conn, workspaceDatabase(layout.activeId!));
+      },
+      (e) => setError(String(e)),
+    );
   }, []);
+
+  useEffect(() => {
+    // Only once something has loaded, so a failed start doesn't wipe the saved layout.
+    if (connections.length === 0) return;
+    try {
+      localStorage.setItem(LAYOUT_KEY, JSON.stringify({ activeId, tabs, activeTab } satisfies Layout));
+    } catch {
+      // Not remembered this time.
+    }
+  }, [activeId, tabs, activeTab, connections.length]);
 
   // The MCP server writes agent statements to the shared audit log from its own
   // process; poll it while the window is visible. Idle when hidden.
@@ -479,7 +518,8 @@ export default function App() {
         {tabs.map((t) => {
           const conn = connections.find((c) => c.id === baseId(t.connectionId));
           const visible = t.id === current && t.connectionId === activeId;
-          if (!conn) return null;
+          // Restored tabs wait until their workspace is connected.
+          if (!conn || !relations[t.connectionId]) return null;
           if (t.kind === "insights") {
             return (
               <div key={t.id} className="tab-page" style={{ display: visible ? "flex" : "none" }}>
