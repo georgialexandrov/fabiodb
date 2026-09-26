@@ -387,3 +387,6 @@ button:disabled { opacity: 0.4; }
 .new-row-fields { max-height: 55vh; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
 .set-null-field.on { color: var(--accent); }
 .menu kbd { font: 10px var(--mono); color: var(--muted); margin-left: 6px; }
+/* The grid selects cells, not text: shift-click extends the range without painting the page. */
+.grid { -webkit-user-select: none; user-select: none; }
+.grid textarea { -webkit-user-select: text; user-select: text; }
