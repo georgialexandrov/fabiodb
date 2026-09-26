@@ -4,6 +4,7 @@
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use fabio_core::{AuditLog, PgTarget, SavedConnection, Source, Store, Target};
 use serde_json::{Value, json};
@@ -20,11 +21,10 @@ impl Server {
     /// A server over a fresh Fabio folder with Chinook in Postgres (open to
     /// agents), Chinook in SQLite (open) and a private copy (not open).
     fn start() -> Server {
-        let dir = std::env::temp_dir().join(format!(
-            "fabio-mcp-{}-{:x}",
-            std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
-        ));
+        // Tests run in parallel and clean up after themselves: one folder each.
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let dir = std::env::temp_dir().join(format!("fabio-mcp-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        let _ = std::fs::remove_dir_all(&dir);
         let store = Store::new(dir.join("connections.json"));
         let sqlite: PathBuf = concat!(env!("CARGO_MANIFEST_DIR"), "/../../dev/data/Chinook_Sqlite.sqlite").into();
         let url = std::env::var("FABIO_TEST_PG_URL").unwrap_or_else(|_| "postgres://fabio@localhost:54329/chinook".into());

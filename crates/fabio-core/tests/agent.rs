@@ -206,8 +206,10 @@ fn agent_with(connections: &[(&str, bool, Target)]) -> (Agent, Arc<AuditLog>) {
     (Agent::new(store, audit.clone(), limits(), Box::new(|_| Ok(None))), audit)
 }
 
-fn rand() -> u128 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+/// Unique within this test run (clock nanos can repeat across threads).
+fn rand() -> usize {
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 #[tokio::test]

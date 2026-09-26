@@ -2,7 +2,7 @@
 
 Read this first in a new session, then `CLAUDE.md` (rules), `PLAN.md` (phases,
 budgets, decisions) and `VOICE.md` (any text users see). Last updated
-2026-09-26, after commit `344822a`.
+2026-09-26, after commit `a3ac9ac`.
 
 ## What Fabio is
 
@@ -17,7 +17,7 @@ Mascot: Fabio the marmot, who watches the burrow and whistles once.
 Tauri 2 · Rust core · React 19 + TypeScript + Vite · CodeMirror 6 · `@tanstack/react-virtual`.
 
 ```
-crates/fabio-core/      all database logic; the MCP server will reuse it
+crates/fabio-core/      all database logic; the MCP server reuses it
   src/lib.rs            Db (enum over engines), shared types, Error, Canceller
   src/postgres.rs       tokio-postgres + native-tls; read-only by default
   src/sqlite.rs         rusqlite (bundled); opened read-only, reopened for writes
@@ -26,6 +26,8 @@ crates/fabio-core/      all database logic; the MCP server will reuse it
   src/insights.rs       pg_stat_activity / pg_stat_statements / index + scan stats
   src/audit.rs          AuditLog: every human/agent statement in SQLite (WAL)
   src/store.rs          saved connections JSON (passwords never written here)
+  src/agent.rs          ReadOnlyDb (guardrails) + Agent (allowlist, audit) for MCP
+crates/fabio-mcp/       stdio MCP server binary; tools.rs = schemas + result text
   tests/                integration tests against Chinook in BOTH engines
   examples/explain.rs   print findings for a statement against dev Postgres
 app/src-tauri/src/lib.rs  Tauri commands: thin wrappers + Keychain + sessions + audit
@@ -42,7 +44,8 @@ design/                 icon source (fabio-1.png), icon-1024.png on the Apple gr
 ```sh
 export PATH=/opt/homebrew/opt/rustup/bin:$PATH   # already in ~/.zshrc
 dev/pg.sh start                                   # needed by core tests and the app's Chinook PG
-cargo test -p fabio-core                          # 65 tests, ~2 s
+cargo test -p fabio-core                          # 83 tests, ~4 s
+cargo test -p fabio-mcp                           # 7 tests, drives the binary over stdio
 cd app && pnpm test                               # 11 Vitest tests (statement splitter)
 cd app && pnpm tauri dev                          # run with hot reload
 cd app && pnpm tauri build --bundles app && python3 ../bench/startup.py   # release + budgets
@@ -50,7 +53,15 @@ cd app && pnpm tauri build --bundles app && python3 ../bench/startup.py   # rele
 
 Two Chinook connections (Postgres and SQLite) are pre-saved in
 `~/Library/Application Support/dev.fabio.app/connections.json`. The audit log is
-`audit.sqlite` in the same folder.
+`audit.sqlite` in the same folder. `chinook-pg` is marked `"agent": true`.
+
+Register the MCP server with Claude Code (it reads that folder and the keychain;
+`FABIO_DIR` overrides the folder):
+
+```sh
+cargo build -p fabio-mcp --release
+claude mcp add fabio -- "$PWD/target/release/fabio-mcp"
+```
 
 ## Done
 
@@ -90,6 +101,24 @@ Tauri shell, core engine, Chinook in both engines, benchmark harness.
 - **Row cap** of 10k rows; the rest is cancelled on the server, and the UI says so.
 - **History** (⌘Y) from the audit log.
 
+### Phase 4 — Agent 🟡 (built; exit run with Claude Code left)
+- **Guardrails in the core** (`agent.rs`, tested against both engines,
+  mutation-checked): Postgres statements run one at a time (prepare rejects a
+  second) inside `BEGIN READ ONLY … ROLLBACK`, must start with SELECT / WITH /
+  VALUES / TABLE / SHOW / EXPLAIN, `statement_timeout` 10 s, 500-row cap,
+  `application_name = 'fabio agent'`. SQLite: read-only open, `query_only`
+  before each statement, no ATTACH, 10 s interrupt, 500-row cap.
+- **Allowlist:** `SavedConnection.agent` ("Agents can query" in the connection
+  form). Read fresh on every call, so unticking takes effect immediately.
+- **`fabio-mcp`:** stdio server, tools `list_connections`, `list_tables`,
+  `describe_table` (bare or `schema.table`), `sample_rows`, `query`,
+  `explain` (findings, then the plan one node per line), `insights`.
+  Every `query`/`explain` is audited as `Source::Agent`, refusals included.
+- **Agent panel:** app polls `AuditLog::agent_since` every 2 s while visible.
+  Sidebar line "Agent ran N queries on X · ms" (last 10 min) opens the
+  connection's Agent tab; a statement there opens in a query tab and runs or
+  explains again.
+
 ### Phase 3 — Performance ✅ (except side-by-side plan diff)
 - **Explain:** ⌘E = `EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT JSON)` inside a
   transaction that is **always rolled back**; ⇧⌘E = estimate only. SQLite =
@@ -109,6 +138,10 @@ Tauri shell, core engine, Chinook in both engines, benchmark harness.
 SQLite browsing, query run + highlighting, error underline, autocomplete, plan
 view + finding on `perf.big`, SQLite plan, Insights.
 
+**Phase 4 seen on screen:** Agent tab (live entries from the MCP process, a
+refused write in red), sidebar summary, opening an agent EXPLAIN in a tab.
+Not yet clicked: the "Agents can query" checkbox (the flag was set in the JSON).
+
 **Built and covered by tests, not yet clicked through by a human:** sort, filters,
 Structure tab + foreign-key jump, connection form (save/edit/delete, URL paste,
 Keychain), drag-and-drop, write-mode toggle, history panel, Esc cancel in the UI,
@@ -124,23 +157,13 @@ page jump on the 5M-row table, before → now comparison.
 ### Phase 3 leftovers
 - Side-by-side plan diff (today: a before → now time line only).
 
-### Phase 4 — Agent (next)
-Design, following `PLAN.md` and what's already built:
-- New crate `crates/fabio-mcp`: a stdio MCP server binary using `fabio-core`.
-  Tools: `list_connections`, `list_tables`, `describe_table`, `query`
-  (read-only, row cap e.g. 500), `explain` (returns the findings too),
-  `top_statements`/`insights`, `sample_rows`.
-- **Guardrails in the core, not the prompt:** agent connections opened
-  read-only (and never switched to write), `statement_timeout` (e.g. 10 s), row
-  cap; SQLite opened `mode=ro` + `PRAGMA query_only`.
-- **Allowlist:** only connections marked "agent OK" (add a field to
-  `SavedConnection`; checkbox in the connection form). Passwords come from the
-  Keychain (same service `dev.fabio.app`).
-- **Visibility:** every agent statement goes to the same `audit.sqlite` with
-  `Source::Agent`. The app gets an **agent panel** that tails the log (poll
-  `AuditLog::recent`), and each entry opens its result/plan in a tab.
-- Register the server in Claude Code / pi; test by asking Claude Code to debug a
-  slow query on `perf.big` while watching the panel. That's the phase exit.
+### Phase 4 — Agent: exit run left
+- **Exit criterion not yet met:** register the server (above), ask Claude Code
+  to find out why `select count(*) from perf.big where bucket = 7` is slow, and
+  watch the Agent tab. The agent can't create the index; that's for the human.
+- Nice to have: the single whistle (VOICE "Sound") when an agent tries to write.
+- The keychain may ask once to let `fabio-mcp` read a password the app saved
+  (different binary). Chinook has no password, so the dev setup doesn't show it.
 
 ### Phase 5 — Polish / open source
 Cell editing (PK required, show the UPDATE, run in a transaction), CSV/JSON
@@ -169,6 +192,11 @@ export, ⌘K command palette, SSH tunnel, SSL `verify-full`, signed builds
   human types or an agent runs.
 
 ## Gotchas learned the hard way
+- **A read-only transaction is not a sandbox.** As superuser, `COPY … TO
+  PROGRAM` runs a shell inside `BEGIN READ ONLY`. Hence the statement-kind check.
+- UI automation: another app's window can sit over Fabio. Capture only Fabio's
+  window (`screencapture -l <CGWindowID>`), and click only after checking Fabio
+  is frontmost.
 - `tokio_postgres::Error`'s Display is just "db error". Use `as_db_error()` (done in `From`).
 - Postgres allows **temp-table writes in read-only transactions**, so test
   read-only with real tables.

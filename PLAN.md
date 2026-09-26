@@ -142,17 +142,29 @@ current one's exit criteria hold.
   (`SCAN` without an index) highlighted. No stats views exist to build more on.
 - **Exit:** you can answer "why is this slow?" without leaving Fabio.
 
-### Phase 4 — Agent (weekend 4)
-- `fabio-mcp` tools: `list_schemas`, `describe_table`, `query` (read-only),
-  `explain`, `top_queries`, `sample_rows`.
+### Phase 4 — Agent (weekend 4) — 🟡 built 2026-09-26: guardrails, `fabio-mcp`, agent panel; seen on screen: panel, summary line, opening an agent EXPLAIN. Left: the exit run with Claude Code
+- `fabio-mcp` tools: `list_connections`, `list_tables`, `describe_table`,
+  `sample_rows`, `query` (read-only), `explain` (findings + plan as text), `insights`.
+  The protocol (initialize, ping, tools/list, tools/call over stdio) is
+  hand-written, about 100 lines; an SDK would add more dependencies than it saves.
 - Guardrails enforced in the core, not in the prompt:
-  - dedicated connection with `default_transaction_read_only = on`
+  - dedicated connection with `default_transaction_read_only = on`; each
+    statement runs alone (parsed as a prepared statement first, so no
+    `; COMMIT; …` chains) inside `BEGIN READ ONLY … ROLLBACK`, so nothing it
+    `SET`s outlives it
+  - only reading statements (SELECT, WITH, VALUES, TABLE, SHOW, EXPLAIN): a
+    read-only transaction still lets a superuser `COPY … TO PROGRAM` or run `DO`
   - `statement_timeout` (default 10 s), hard row cap (default 500)
-  - SQLite: opened with `mode=ro` + `PRAGMA query_only = ON`; row cap and a
-    progress-handler timeout replace `statement_timeout`
+  - SQLite: opened read-only + `PRAGMA query_only = ON` (set again before each
+    statement), ATTACH disabled; a timer interrupt replaces `statement_timeout`
   - connection allowlist — the agent only sees connections marked "agent OK"
 - Agent panel in the UI: live feed of agent statements from the audit log,
-  click one to open its result and plan in a tab.
+  click one to open its result and plan in a tab. The log keeps no results,
+  so opening one runs it again in a read-only query tab (or explains it again).
+- **Known limit:** functions with side effects that a read-only transaction
+  allows (`pg_terminate_backend`, `pg_reload_conf`, `dblink`) are stopped
+  only by the role's privileges. For anything that matters, give the agent
+  connection a role without superuser.
 - **Exit:** Claude Code debugs a slow query on the dev DB and you watch every step.
 
 ### Phase 5 — Polish & open source (ongoing)
