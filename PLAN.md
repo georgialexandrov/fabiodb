@@ -176,6 +176,37 @@ current one's exit criteria hold.
   Windows, Linux (AppImage). Linux uses WebKitGTK — test it, expect rough edges.
 - Licence: MIT or Apache-2.0.
 
+### v0.1 — the first release people can use (added 2026-09-26)
+
+Done already in Phase 5: CI script + workflow, export, cell editing, grid
+ranges + copy as, ⌘K, snippets, dark mode, SSL verify modes.
+
+**Asked for**
+1. **Column filters** — a filter mark on every column header opens that column's
+   conditions; applied filters show as chips above the grid and on their column.
+2. **Many connections** — the sidebar shows the current connection only; a
+   searchable switcher (recent first, optional groups) replaces the long list.
+3. **Docker** — choose a directory; Fabio reads `compose.yaml` /
+   `docker-compose.yml` (+ `.env`) and proposes connections for the Postgres
+   services it finds (published port, user, password, database).
+4. **Agents create connections** — an MCP tool; agent-made connections are
+   marked as such and open to agents, since the agent supplied the credentials.
+5. **⌘D switches database** on the same server; each database is its own
+   workspace with its own tabs.
+6. **Row details pane** — the selected row, one field per line, editable.
+
+**Also needed for v0.1**
+7. **Where you left it** — reopen connections, tabs and query text on launch.
+8. **Reconnect** after sleep or a dropped network, instead of dead tabs.
+9. **Native menu bar** — Edit menu (copy/paste in inputs), shortcuts findable.
+10. **Add and delete rows** — through the same review-then-transaction path as edits.
+11. **SSH tunnel** — via the system `ssh` (keys, agent, `~/.ssh/config`).
+12. **Speed** — measure the 60 fps scroll budget (canvas grid only if the DOM
+    grid misses it); trim startup JS (lazy dialogs, maybe Preact); show the
+    window after first paint; binary transfer for large results.
+13. **Release** — licence, README, About box, signed + notarized DMG, the
+    `fabiodb` rename, CI green on GitHub.
+
 ## Non-goals
 
 Databases other than Postgres and SQLite. Performance tooling for SQLite beyond
