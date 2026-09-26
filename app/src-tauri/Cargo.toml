@@ -3,6 +3,7 @@ name = "fabio"
 version = "0.1.0"
 description = "A fast, calm Postgres & SQLite client"
 edition = "2024"
+license = "MIT OR Apache-2.0"
 
 [lib]
 # Distinct from the bin name, see https://github.com/rust-lang/cargo/issues/8519

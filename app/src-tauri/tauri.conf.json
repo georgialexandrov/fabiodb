@@ -38,6 +38,7 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "copyright": "\u00a9 2026 Georgi Alexandrov. MIT OR Apache-2.0."
   }
 }

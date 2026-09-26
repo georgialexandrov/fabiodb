@@ -2,6 +2,7 @@
 name = "fabio-mcp"
 version = "0.1.0"
 edition = "2024"
+license = "MIT OR Apache-2.0"
 description = "Fabio's MCP server: agents query your databases read-only, and the app shows every statement"
 
 [dependencies]

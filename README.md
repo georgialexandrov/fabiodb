@@ -100,4 +100,4 @@ app follows `VOICE.md`.
 
 ## Licence
 
-Not chosen yet.
+Either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
