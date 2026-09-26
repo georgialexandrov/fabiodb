@@ -17,10 +17,12 @@
   color: var(--text);
   background: var(--bg);
   -webkit-font-smoothing: antialiased;
+  color-scheme: light;
 }
 
+/* Dark follows the system unless the user picked a theme (data-theme on <html>). */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #1f1f1f;
     --sidebar: #262625;
     --surface: #2a2a29;
@@ -32,7 +34,22 @@
     --sql-string: #7fbf8f;
     --sql-number: #e0a060;
     --sql-type: #a79be0;
+    color-scheme: dark;
   }
+}
+:root[data-theme="dark"] {
+  --bg: #1f1f1f;
+  --sidebar: #262625;
+  --surface: #2a2a29;
+  --text: #e6e4e0;
+  --muted: #8a8782;
+  --line: #353432;
+  --hover: #32312f;
+  --accent-soft: #d9534f33;
+  --sql-string: #7fbf8f;
+  --sql-number: #e0a060;
+  --sql-type: #a79be0;
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }

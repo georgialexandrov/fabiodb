@@ -6,6 +6,7 @@ import { ConnectionForm } from "./ConnectionForm";
 import { InsightsView } from "./InsightsView";
 import { QueryTab } from "./QueryTab";
 import { TableView } from "./TableView";
+import { applyTheme, nextTheme, savedTheme, THEME_LABELS, type Theme } from "./theme";
 import {
   api,
   compactCount,
@@ -45,6 +46,9 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [agentLog, setAgentLog] = useState<AuditEntry[]>([]);
   const lastAgentId = useRef(0);
+  const [theme, setTheme] = useState<Theme>(savedTheme);
+
+  useEffect(() => applyTheme(theme), [theme]);
 
   useEffect(() => {
     api.listConnections().then(setConnections, (e) => setError(String(e)));
@@ -181,6 +185,7 @@ export default function App() {
       else if (key === "n") setEditing(null);
       else if (key === "t") newQuery();
       else if (key === "w" && current) closeTab(current);
+      else if (key === "l" && e.shiftKey) setTheme(nextTheme);
       else return;
       e.preventDefault();
     }
@@ -227,6 +232,13 @@ export default function App() {
           </button>
           <button className="ghost" title="Open SQLite file (⌘O)" onClick={() => chooseSqlite().catch((e) => setError(String(e)))}>
             ⌘O
+          </button>
+          <button
+            className="ghost theme-toggle"
+            title={`Theme: ${THEME_LABELS[theme]}. Click for ${THEME_LABELS[nextTheme(theme)]} (⇧⌘L)`}
+            onClick={() => setTheme(nextTheme)}
+          >
+            {theme === "system" ? "◐" : theme === "light" ? "○" : "●"}
           </button>
         </div>
 
