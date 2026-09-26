@@ -13,7 +13,8 @@ export type PgTarget = {
 
 export type Target = ({ engine: "postgres" } & PgTarget) | { engine: "sqlite"; path: string };
 
-export type SavedConnection = { id: string; name: string; target: Target };
+/** `agent`: agents may query it read-only through the MCP server. */
+export type SavedConnection = { id: string; name: string; target: Target; agent: boolean };
 
 export type RelationKind = "table" | "view" | "materialized_view";
 
@@ -155,6 +156,7 @@ export const api = {
   explain: (id: string, sql: string, analyze: boolean) => invoke<Plan>("explain", { id, sql, analyze }),
   insights: (id: string) => invoke<Insights>("insights", { id }),
   history: (connectionId: string, limit: number) => invoke<AuditEntry[]>("history", { connectionId, limit }),
+  agentActivity: (after: number) => invoke<AuditEntry[]>("agent_activity", { after }),
 };
 
 export const sameRelation = (a: RelationRef | null, b: RelationRef | null) =>

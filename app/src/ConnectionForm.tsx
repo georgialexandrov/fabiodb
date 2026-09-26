@@ -6,6 +6,7 @@ const NEW_POSTGRES: SavedConnection = {
   id: "",
   name: "",
   target: { engine: "postgres", host: "localhost", port: 5432, user: "postgres", password: null, database: "postgres", ssl: "prefer" },
+  agent: false,
 };
 
 type Props = {
@@ -166,6 +167,17 @@ export function ConnectionForm({ initial, onSaved, onDeleted, onClose }: Props) 
             </button>
           </div>
         )}
+
+        <label className="check">
+          <input type="checkbox" checked={conn.agent} onChange={(e) => setConn({ ...conn, agent: e.target.checked })} />
+          <span>
+            Agents can query
+            <span className="hint-inline">
+              {" "}
+              — read-only, through Fabio’s MCP server. Every statement shows up under Agent.
+            </span>
+          </span>
+        </label>
 
         {status && <p className={status.ok ? "ok" : "error"}>{status.text}</p>}
 

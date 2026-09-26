@@ -96,14 +96,23 @@ impl AuditLog {
 
     /// Newest first, optionally for one connection.
     pub fn recent(&self, connection_id: Option<&str>, limit: u32) -> Result<Vec<AuditEntry>> {
+        self.select("WHERE ?1 IS NULL OR connection_id = ?1", params![connection_id], limit)
+    }
+
+    /// Agent statements with an id above `after`, newest first. The agent
+    /// panel polls this with the last id it has.
+    pub fn agent_since(&self, after: i64, limit: u32) -> Result<Vec<AuditEntry>> {
+        self.select("WHERE source = 'agent' AND id > ?1", params![after], limit)
+    }
+
+    fn select(&self, filter: &str, args: &[&dyn rusqlite::ToSql], limit: u32) -> Result<Vec<AuditEntry>> {
         let conn = self.conn.lock().expect("audit log poisoned");
-        let mut statement = conn.prepare(
+        let mut statement = conn.prepare(&format!(
             "SELECT id, at_ms, connection_id, source, sql, elapsed_ms, rows, error FROM statements
-              WHERE ?1 IS NULL OR connection_id = ?1
-              ORDER BY id DESC LIMIT ?2",
-        )?;
+              {filter} ORDER BY id DESC LIMIT {limit}"
+        ))?;
         let entries = statement
-            .query_map(params![connection_id, limit], |r| {
+            .query_map(args, |r| {
                 Ok(AuditEntry {
                     id: r.get(0)?,
                     at_ms: r.get(1)?,

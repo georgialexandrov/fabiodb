@@ -95,8 +95,8 @@ select:focus, input:focus, textarea:focus { border-color: var(--accent); }
 .engine { font-size: 9px; font-weight: 700; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 3px; }
 
 .relations { flex: 1; overflow: auto; padding: 8px 6px; }
-.relations-head { display: flex; gap: 4px; margin: 0 2px 6px; }
-.relations-head input { flex: 1; min-width: 0; }
+.relations-head { display: flex; flex-wrap: wrap; gap: 2px 4px; margin: 0 2px 6px; }
+.relations-head input { flex: 1 0 100%; min-width: 0; }
 .schema { font-size: 11px; font-weight: 600; color: var(--muted); padding: 8px 8px 2px; text-transform: uppercase; letter-spacing: 0.4px; }
 .relation.view, .relation.materialized_view { font-style: italic; }
 .count { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
@@ -264,3 +264,20 @@ button:disabled { opacity: 0.4; }
 .insights code { font-family: var(--mono); font-size: 11px; }
 .accent { color: var(--accent); }
 .tab-kind:empty { display: none; }
+
+/* Agent */
+.modal label.check { flex-direction: row; align-items: baseline; gap: 8px; font-size: 13px; color: var(--text); margin-top: 4px; }
+.modal label.check input { font-family: inherit; }
+.hint-inline { color: var(--muted); font-size: 12px; }
+.agent-summary { margin: auto 0 0; padding: 10px 14px; border: 0; border-top: 1px solid var(--line); background: none; text-align: left; font-size: 12px; color: var(--muted); cursor: pointer; }
+.agent-summary:hover { color: var(--text); background: var(--hover); }
+.agent-log { flex: 1; overflow: auto; }
+.agent-entry { display: flex; gap: 14px; padding: 8px 16px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.agent-entry:hover { background: var(--hover); }
+.agent-time { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; padding-top: 2px; white-space: nowrap; }
+.agent-body { min-width: 0; flex: 1; }
+.agent-sql { font-family: var(--mono); font-size: 12px; white-space: pre-wrap; overflow: hidden; max-height: 4.6em; }
+.agent-meta { color: var(--muted); font-size: 11px; margin-top: 2px; }
+.agent-entry.failed .agent-meta { color: var(--accent); }
+.agent-empty { margin: auto; max-width: 420px; text-align: center; }
+.agent-empty code { font-family: var(--mono); font-size: 12px; }

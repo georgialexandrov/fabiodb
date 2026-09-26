@@ -263,6 +263,13 @@ fn history(app: State<App>, connection_id: String, limit: u32) -> Res<Vec<AuditE
     app.audit.recent(Some(&connection_id), limit).map_err(err)
 }
 
+/// Agent statements newer than `after`, newest first. The agent panel polls this;
+/// the MCP server writes them from its own process.
+#[tauri::command]
+fn agent_activity(app: State<App>, after: i64) -> Res<Vec<AuditEntry>> {
+    app.audit.agent_since(after, 500).map_err(err)
+}
+
 /// Called by the frontend after its first paint. With `FABIO_EXIT_ON_READY=1`
 /// the app prints the startup time and quits — that's how `bench/startup.py`
 /// measures cold start.
@@ -315,6 +322,7 @@ pub fn run() {
             explain,
             insights,
             history,
+            agent_activity,
             app_ready,
         ])
         .run(tauri::generate_context!())

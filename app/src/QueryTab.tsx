@@ -14,11 +14,13 @@ type Props = {
   sql: string;
   onSqlChange: (sql: string) => void;
   visible: boolean;
+  /** Run or explain `sql` once the session is open (opening an agent statement). */
+  autorun?: "run" | "explain" | "analyze";
 };
 
 type Failure = { message: string; statement?: Statement; position?: number | null };
 
-export function QueryTab({ connectionId, engine, schema, sql, onSqlChange, visible }: Props) {
+export function QueryTab({ connectionId, engine, schema, sql, onSqlChange, visible, autorun }: Props) {
   const [session, setSession] = useState<string | null>(null);
   const [writable, setWritable] = useState(false);
   const [running, setRunning] = useState(false);
@@ -44,6 +46,15 @@ export function QueryTab({ connectionId, engine, schema, sql, onSqlChange, visib
       if (id) api.closeSession(id);
     };
   }, [connectionId]);
+
+  const autoran = useRef(false);
+  useEffect(() => {
+    if (!session || !autorun || autoran.current) return;
+    autoran.current = true;
+    const at = { text: sql, from: 0, to: 0, head: 0 };
+    if (autorun === "run") run("statement", at);
+    else explain(autorun === "analyze", at);
+  }, [session]);
 
   const refreshHistory = () => api.history(connectionId, 200).then(setHistory, () => {});
   useEffect(() => {

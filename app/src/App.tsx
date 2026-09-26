@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { AgentView, explainMode, formatMs } from "./AgentView";
 import { ConnectionForm } from "./ConnectionForm";
 import { InsightsView } from "./InsightsView";
 import { QueryTab } from "./QueryTab";
@@ -9,6 +10,7 @@ import {
   api,
   compactCount,
   sameRelation,
+  type AuditEntry,
   type CompletionTable,
   type Relation,
   type RelationRef,
@@ -19,8 +21,14 @@ const SQLITE_EXTENSIONS = /\.(db|sqlite|sqlite3|db3)$/i;
 
 type Tab =
   | { id: string; connectionId: string; kind: "table"; relation: RelationRef }
-  | { id: string; connectionId: string; kind: "query"; title: string; sql: string }
-  | { id: string; connectionId: string; kind: "insights" };
+  | { id: string; connectionId: string; kind: "query"; title: string; sql: string; autorun?: Autorun }
+  | { id: string; connectionId: string; kind: "insights" }
+  | { id: string; connectionId: string; kind: "agent" };
+
+type Autorun = "run" | "explain" | "analyze";
+
+/** The sidebar mentions agent activity this recent. */
+const AGENT_RECENT_MS = 10 * 60_000;
 
 let nextTab = 1;
 
@@ -35,9 +43,30 @@ export default function App() {
   const [search, setSearch] = useState("");
   const [connecting, setConnecting] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [agentLog, setAgentLog] = useState<AuditEntry[]>([]);
+  const lastAgentId = useRef(0);
 
   useEffect(() => {
     api.listConnections().then(setConnections, (e) => setError(String(e)));
+  }, []);
+
+  // The MCP server writes agent statements to the shared audit log from its own
+  // process; poll it while the window is visible. Idle when hidden.
+  useEffect(() => {
+    async function poll() {
+      if (document.hidden) return;
+      const fresh = await api.agentActivity(lastAgentId.current).catch(() => []);
+      if (fresh.length === 0) return;
+      lastAgentId.current = fresh[0].id;
+      setAgentLog((log) => [...fresh, ...log].slice(0, 1000));
+    }
+    poll();
+    const timer = setInterval(poll, 2000);
+    document.addEventListener("visibilitychange", poll);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", poll);
+    };
   }, []);
 
   async function activate(connection: SavedConnection) {
@@ -73,10 +102,10 @@ export default function App() {
     focusTab(tab);
   }
 
-  function newQuery(connectionId = activeId, sql = "") {
+  function newQuery(connectionId = activeId, sql = "", autorun?: Autorun) {
     if (!connectionId) return;
     const n = tabs.filter((t) => t.connectionId === connectionId && t.kind === "query").length + 1;
-    const tab: Tab = { id: `t${nextTab++}`, connectionId, kind: "query", title: `Query ${n}`, sql };
+    const tab: Tab = { id: `t${nextTab++}`, connectionId, kind: "query", title: `Query ${n}`, sql, autorun };
     setTabs((all) => [...all, tab]);
     focusTab(tab);
   }
@@ -86,6 +115,17 @@ export default function App() {
     const existing = tabs.find((t) => t.connectionId === activeId && t.kind === "insights");
     if (existing) return focusTab(existing);
     const tab: Tab = { id: `t${nextTab++}`, connectionId: activeId, kind: "insights" };
+    setTabs((all) => [...all, tab]);
+    focusTab(tab);
+  }
+
+  async function openAgent(connectionId: string) {
+    const conn = connections.find((c) => c.id === connectionId);
+    if (!conn) return;
+    if (connectionId !== activeId) await activate(conn);
+    const existing = tabs.find((t) => t.connectionId === connectionId && t.kind === "agent");
+    if (existing) return focusTab(existing);
+    const tab: Tab = { id: `t${nextTab++}`, connectionId, kind: "agent" };
     setTabs((all) => [...all, tab]);
     focusTab(tab);
   }
@@ -158,6 +198,20 @@ export default function App() {
     return groups;
   }, [relations, activeId, search]);
 
+  // "Agent ran 3 queries on chinook · 42 ms": the latest connection an agent used, lately.
+  const agentSummary = useMemo(() => {
+    const latest = agentLog[0];
+    if (!latest || Date.now() - latest.at_ms > AGENT_RECENT_MS) return null;
+    const conn = connections.find((c) => c.id === latest.connection_id);
+    const burst = agentLog.filter((e) => e.connection_id === latest.connection_id && latest.at_ms - e.at_ms < AGENT_RECENT_MS);
+    const ms = burst.reduce((sum, e) => sum + e.elapsed_ms, 0);
+    const n = burst.length;
+    return {
+      connectionId: latest.connection_id,
+      text: `Agent ran ${n} ${n === 1 ? "query" : "queries"} on ${conn?.name ?? "a deleted connection"} · ${formatMs(ms)}`,
+    };
+  }, [agentLog, connections]);
+
   const active = connections.find((c) => c.id === activeId) ?? null;
   const activeTabs = tabs.filter((t) => t.connectionId === activeId);
   const currentTab = tabs.find((t) => t.id === current) ?? null;
@@ -208,6 +262,11 @@ export default function App() {
               <button className="ghost" onClick={() => newQuery()} title="New query (⌘T)">
                 SQL
               </button>
+              {(active.agent || agentLog.some((e) => e.connection_id === active.id)) && (
+                <button className="ghost" onClick={() => openAgent(active.id)} title="Statements agents ran on this connection">
+                  Agent
+                </button>
+              )}
               {active.target.engine === "postgres" && (
                 <button className="ghost" onClick={openInsights} title="What the server is doing, and where the time went">
                   Insights
@@ -231,6 +290,12 @@ export default function App() {
             ))}
           </div>
         )}
+
+        {agentSummary && (
+          <button className="agent-summary" onClick={() => openAgent(agentSummary.connectionId)}>
+            {agentSummary.text}
+          </button>
+        )}
       </aside>
 
       <main className="content">
@@ -239,7 +304,9 @@ export default function App() {
             {activeTabs.map((t) => (
               <div key={t.id} className={`tab ${t.id === current ? "active" : ""}`} onClick={() => focusTab(t)} onAuxClick={() => closeTab(t.id)}>
                 <span className={`tab-kind ${t.kind}`}>{t.kind === "query" ? "SQL" : ""}</span>
-                <span className="ellipsis">{t.kind === "query" ? t.title : t.kind === "insights" ? "Insights" : t.relation.name}</span>
+                <span className="ellipsis">
+                  {t.kind === "query" ? t.title : t.kind === "insights" ? "Insights" : t.kind === "agent" ? "Agent" : t.relation.name}
+                </span>
                 <button
                   className="ghost tab-close"
                   onClick={(e) => {
@@ -275,6 +342,19 @@ export default function App() {
               </div>
             );
           }
+          if (t.kind === "agent") {
+            return (
+              <div key={t.id} className="tab-page" style={{ display: visible ? "flex" : "none" }}>
+                <AgentView
+                  entries={agentLog.filter((e) => e.connection_id === t.connectionId)}
+                  onOpen={(e) => {
+                    const { mode, sql } = explainMode(e.sql);
+                    newQuery(t.connectionId, sql, mode);
+                  }}
+                />
+              </div>
+            );
+          }
           if (t.kind === "query") {
             return (
               <QueryTab
@@ -283,6 +363,7 @@ export default function App() {
                 engine={conn.target.engine}
                 schema={schemas[t.connectionId] ?? []}
                 sql={t.sql}
+                autorun={t.autorun}
                 onSqlChange={(sql) => setTabs((all) => all.map((x) => (x.id === t.id ? { ...x, sql } : x)))}
                 visible={visible}
               />
