@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 
 use rusqlite::{Connection, InterruptHandle, OpenFlags, params_from_iter, types::ValueRef};
 
+use crate::edit::{self, EditDialect, RowUpdate};
 use crate::export::{self, ExportFormat, RowWriter};
 use crate::sql::{self, Dialect, quote};
 use crate::{
@@ -221,6 +222,24 @@ impl Lite {
         .await
     }
 
+    pub async fn apply_updates(&self, relation: &RelationRef, info: TableInfo, updates: &[RowUpdate]) -> Result<u64> {
+        let (relation, updates) = (relation.clone(), updates.to_vec());
+        self.with(move |conn| {
+            let from = format!("{}.{}", quote(&relation.schema), quote(&relation.name));
+            // Dropped without commit = rolled back.
+            let tx = conn.unchecked_transaction()?;
+            for update in &updates {
+                let (sql, params) = edit::statement(&EDIT, &from, &info, update)?;
+                if tx.execute(&sql, params_from_iter(params))? != 1 {
+                    return Err(edit::stale(&info, update));
+                }
+            }
+            tx.commit()?;
+            Ok(updates.len() as u64)
+        })
+        .await
+    }
+
     pub async fn page(&self, request: &PageRequest) -> Result<Page> {
         let request = request.clone();
         self.with(move |conn| {
@@ -324,6 +343,14 @@ fn one_statement(e: rusqlite::Error) -> Error {
         other => other.into(),
     }
 }
+
+// Column affinity converts the text parameters, as it does for filters.
+const EDIT: EditDialect = EditDialect {
+    param: |n| format!("?{n}"),
+    assign: |col, p| format!("{} = {p}", quote(&col.name)),
+    key: |col, p| format!("{} = {p}", quote(&col.name)),
+    unchanged: |col, p| format!("{} IS {p}", quote(&col.name)),
+};
 
 /// Up to `max` rows, and whether more were left.
 fn collect_rows(mut cursor: rusqlite::Rows<'_>, width: usize, max: usize) -> Result<(Rows, bool)> {

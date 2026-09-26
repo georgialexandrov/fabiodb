@@ -5,6 +5,7 @@ use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use tokio_postgres::{Client, SimpleQueryMessage, types::ToSql};
 
+use crate::edit::{self, EditDialect, RowUpdate};
 use crate::export::{self, ExportFormat, RowWriter};
 use crate::sql::{self, Dialect, quote};
 use crate::{
@@ -403,6 +404,32 @@ impl Pg {
         export::remove_on_error(path, written)
     }
 
+    pub async fn apply_updates(&self, relation: &RelationRef, info: &TableInfo, updates: &[RowUpdate]) -> Result<u64> {
+        let from = format!("{}.{}", quote(&relation.schema), quote(&relation.name));
+        self.client.batch_execute("BEGIN /* fabio */").await?;
+        let applied = async {
+            for update in updates {
+                let (sql, params) = edit::statement(&EDIT, &from, info, update)?;
+                let params: Vec<&(dyn ToSql + Sync)> = params.iter().map(|p| p as _).collect();
+                if self.client.execute(&sql, &params).await? != 1 {
+                    return Err(edit::stale(info, update));
+                }
+            }
+            Ok(updates.len() as u64)
+        }
+        .await;
+        match applied {
+            Ok(n) => {
+                self.client.batch_execute("COMMIT /* fabio */").await?;
+                Ok(n)
+            }
+            Err(e) => {
+                self.client.batch_execute("ROLLBACK /* fabio */").await?;
+                Err(e)
+            }
+        }
+    }
+
     pub async fn page(&self, request: &PageRequest) -> Result<Page> {
         let started = Instant::now();
         let info = self.describe(&request.relation).await?;
@@ -428,6 +455,14 @@ impl Pg {
         })
     }
 }
+
+const EDIT: EditDialect = EditDialect {
+    param: |n| format!("${n}::text"),
+    assign: |col, p| format!("{} = CAST({p} AS {})", quote(&col.name), col.base_type),
+    key: |col, p| format!("{} = CAST({p} AS {})", quote(&col.name), col.base_type),
+    // Compared as text: the value came to the grid as text.
+    unchanged: |col, p| format!("{}::text IS NOT DISTINCT FROM {p}", quote(&col.name)),
+};
 
 pub(crate) const ONE_STATEMENT: &str = "Agents run one statement at a time. Send the others separately.";
 

@@ -219,6 +219,11 @@ fn exact_number(v: &str) -> Option<serde_json::Value> {
     }
 }
 
+/// A SQL literal for a value of a column of this type, as shown to people.
+pub(crate) fn literal(data_type: &str, value: Option<&str>) -> String {
+    sql_literal(kind(data_type), value)
+}
+
 fn sql_literal(kind: Kind, value: Option<&str>) -> String {
     let Some(v) = value else { return "NULL".into() };
     let numeric = !v.is_empty()

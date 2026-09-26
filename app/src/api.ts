@@ -115,6 +115,11 @@ export type Insights = {
   }[];
 };
 
+export type ColumnValue = { column: string; value: string | null };
+
+/** `old` is what the grid showed; the save only applies if the row still has it. */
+export type RowUpdate = { key: ColumnValue[]; changes: { column: string; old: string | null; new: string | null }[] };
+
 export type ExportFormat = "csv" | "json" | "markdown" | "insert";
 
 export type CompletionTable = { schema: string; name: string; columns: string[] };
@@ -161,6 +166,10 @@ export const api = {
     invoke<void>("export_rows", { columns, rows, format, table, path }),
   copyRows: (columns: ResultColumn[], rows: Rows, format: ExportFormat, table: RelationRef | null) =>
     invoke<string>("copy_rows", { columns, rows, format, table }),
+  previewUpdates: (id: string, relation: RelationRef, updates: RowUpdate[]) =>
+    invoke<string[]>("preview_updates", { id, relation, updates }),
+  applyUpdates: (id: string, relation: RelationRef, updates: RowUpdate[]) =>
+    invoke<number>("apply_updates", { id, relation, updates }),
   completionSchema: (id: string) => invoke<CompletionTable[]>("completion_schema", { id }),
   openSession: (connectionId: string) => invoke<string>("open_session", { connectionId }),
   closeSession: (id: string) => invoke<void>("close_session", { id }),

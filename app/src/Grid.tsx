@@ -22,12 +22,25 @@ type Props = {
   scrollTo?: { row: number; nonce: number } | null;
   /** Added to displayed row numbers when the grid shows a window of a larger result. */
   rowOffset?: number;
+  /** Cell editing, for tables with a primary key. */
+  edit?: GridEdit;
+};
+
+export type GridEdit = {
+  /** The unsaved value of a cell; `undefined` when it hasn't been edited. */
+  pending: (row: number, col: number) => string | null | undefined;
+  onEdit: (row: number, col: number, value: string | null) => void;
+  /** Why this grid can't be edited; said once when someone tries. */
+  blocked: string | null;
+  onBlocked: (reason: string) => void;
+  nullable: boolean[];
 };
 
 /** Virtualized, random-access grid. Only on-screen rows are rendered. */
-export function Grid({ columns, rowCount, row, sample, onRange, sort, onSort, scrollTo, rowOffset = 0 }: Props) {
+export function Grid({ columns, rowCount, row, sample, onRange, sort, onSort, scrollTo, rowOffset = 0, edit }: Props) {
   const scroller = useRef<HTMLDivElement>(null);
   const [selected, setSelected] = useState<{ row: number; col: number } | null>(null);
+  const [editing, setEditing] = useState<{ row: number; col: number; draft: string } | null>(null);
   const [detail, setDetail] = useState<{ column: ResultColumn; value: string | null } | null>(null);
 
   const widths = useMemo(() => columnWidths(columns, sample), [columns, sample]);
@@ -51,20 +64,64 @@ export function Grid({ columns, rowCount, row, sample, onRange, sort, onSort, sc
     if (scrollTo) virtualizer.scrollToIndex(scrollTo.row, { align: "start" });
   }, [scrollTo]);
 
-  useEffect(() => setSelected(null), [columns]);
+  useEffect(() => {
+    setSelected(null);
+    setEditing(null);
+  }, [columns]);
+
+  /** What the cell shows: the unsaved edit if there is one. */
+  const shown = (r: Row, rowIndex: number, col: number) => {
+    const pending = edit?.pending(rowIndex, col);
+    return pending === undefined ? r[col] : pending;
+  };
+
+  function startEdit(at: { row: number; col: number }) {
+    if (!edit) return;
+    if (edit.blocked) return edit.onBlocked(edit.blocked);
+    const r = row(at.row);
+    if (r) setEditing({ ...at, draft: shown(r, at.row, at.col) ?? "" });
+  }
+
+  function commit(value: string | null) {
+    if (!editing) return;
+    edit?.onEdit(editing.row, editing.col, value);
+    setEditing(null);
+  }
+
+  function move(dRow: number, dCol: number) {
+    if (!selected) return;
+    const next = {
+      row: Math.min(Math.max(0, selected.row + dRow), rowCount - 1),
+      col: Math.min(Math.max(0, selected.col + dCol), columns.length - 1),
+    };
+    setSelected(next);
+    virtualizer.scrollToIndex(next.row, { align: "auto" });
+  }
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (!selected || !(e.metaKey || e.ctrlKey) || e.key !== "c") return;
-      if (window.getSelection()?.toString()) return;
+      // Only the grid on screen, never while typing somewhere else or with a dialog open.
+      if (!selected || editing || !scroller.current?.offsetParent || document.querySelector(".modal-backdrop")) return;
+      const target = e.target as HTMLElement;
+      if (target.closest("input, textarea, select, .cm-editor")) return;
       const r = row(selected.row);
-      if (!r) return;
-      navigator.clipboard.writeText(r[selected.col] ?? "NULL");
+      if ((e.metaKey || e.ctrlKey) && e.key === "c") {
+        if (window.getSelection()?.toString() || !r) return;
+        navigator.clipboard.writeText(shown(r, selected.row, selected.col) ?? "NULL");
+      } else if (e.metaKey || e.ctrlKey || e.altKey) {
+        return;
+      } else if (e.key === "ArrowUp") move(-1, 0);
+      else if (e.key === "ArrowDown") move(1, 0);
+      else if (e.key === "ArrowLeft") move(0, -1);
+      else if (e.key === "ArrowRight") move(0, 1);
+      else if (e.key === "Enter" && edit) startEdit(selected);
+      else if (e.key === " " && r) setDetail({ column: columns[selected.col], value: shown(r, selected.row, selected.col) });
+      else return;
       e.preventDefault();
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selected, row]);
+  });
 
   function clickHeader(name: string) {
     if (!onSort) return;
@@ -108,14 +165,30 @@ export function Grid({ columns, rowCount, row, sample, onRange, sort, onSort, sc
                 </div>
                 {columns.map((column, c) => {
                   if (!r) return <div key={c} className="grid-cell" style={{ width: widths[c] }} />;
-                  const value = r[c];
+                  const value = shown(r, item.index, c);
+                  const at = { row: item.index, col: c };
+                  if (editing?.row === item.index && editing.col === c) {
+                    return (
+                      <CellEditor
+                        key={c}
+                        width={widths[c]}
+                        draft={editing.draft}
+                        nullable={edit?.nullable[c] ?? false}
+                        onDraft={(draft) => setEditing({ ...editing, draft })}
+                        onCommit={commit}
+                        onCancel={() => setEditing(null)}
+                      />
+                    );
+                  }
+                  const edited = edit?.pending(item.index, c) !== undefined;
                   return (
                     <div
                       key={c}
-                      className={cellClass(column, value, selected?.row === item.index && selected.col === c)}
+                      className={`${cellClass(column, value, selected?.row === item.index && selected.col === c)}${edited ? " edited" : ""}`}
                       style={{ width: widths[c] }}
-                      onClick={() => setSelected({ row: item.index, col: c })}
-                      onDoubleClick={() => setDetail({ column, value })}
+                      onClick={() => setSelected(at)}
+                      onDoubleClick={() => (edit ? startEdit(at) : setDetail({ column, value }))}
+                      title={edited ? `was ${r[c] ?? "NULL"}` : undefined}
                     >
                       {value === null ? "NULL" : preview(value)}
                     </div>
@@ -127,6 +200,49 @@ export function Grid({ columns, rowCount, row, sample, onRange, sort, onSort, sc
         </div>
       </div>
       {detail && <ValuePanel {...detail} onClose={() => setDetail(null)} />}
+    </div>
+  );
+}
+
+/** Enter saves the cell (⌥↵ for a new line), Esc cancels. */
+function CellEditor(props: {
+  width: number;
+  draft: string;
+  nullable: boolean;
+  onDraft: (draft: string) => void;
+  onCommit: (value: string | null) => void;
+  onCancel: () => void;
+}) {
+  const { width, draft, nullable, onDraft, onCommit, onCancel } = props;
+  const done = useRef(false);
+  const finish = (value: string | null | undefined) => {
+    if (done.current) return;
+    done.current = true;
+    value === undefined ? onCancel() : onCommit(value);
+  };
+  return (
+    <div className="grid-cell editing" style={{ width }}>
+      <textarea
+        autoFocus
+        spellCheck={false}
+        value={draft}
+        rows={1}
+        onFocus={(e) => e.currentTarget.select()}
+        onChange={(e) => onDraft(e.target.value)}
+        onBlur={() => finish(draft)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") finish(undefined);
+          else if (e.key === "Enter" && !e.altKey && !e.shiftKey) finish(draft);
+          else return;
+          e.preventDefault();
+          e.stopPropagation();
+        }}
+      />
+      {nullable && (
+        <button className="set-null" onMouseDown={(e) => (e.preventDefault(), finish(null))} title="Set to NULL">
+          NULL
+        </button>
+      )}
     </div>
   );
 }

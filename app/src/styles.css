@@ -306,3 +306,12 @@ button:disabled { opacity: 0.4; }
 .menu button:hover { background: var(--hover); }
 .menu-separator { height: 1px; background: var(--line); margin: 4px 6px; }
 .menu-note { margin: 4px 10px 3px; font-size: 11px; color: var(--muted); }
+
+/* Cell editing */
+.grid-cell.edited { background: var(--accent-soft); font-weight: 550; }
+.grid-cell.editing { padding: 0; display: flex; align-items: stretch; overflow: visible; z-index: 2; }
+.grid-cell.editing textarea { flex: 1; min-width: 0; resize: none; border: 1px solid var(--accent); border-radius: 0; margin: 0; padding: 3px 8px; font: inherit; font-family: var(--mono); background: var(--surface); color: var(--text); outline: none; white-space: pre; overflow: hidden; }
+.grid-cell.editing .set-null { border: 1px solid var(--accent); border-left: 0; border-radius: 0; padding: 0 6px; font-size: 10px; color: var(--muted); background: var(--surface); }
+.edit-bar { display: flex; align-items: center; gap: 10px; padding: 6px 16px; border-top: 1px solid var(--line); background: var(--accent-soft); font-size: 12px; }
+.sql-preview { max-height: 320px; overflow: auto; margin: 0; padding: 10px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; font-family: var(--mono); font-size: 12px; white-space: pre-wrap; }
+.modal.wide { width: 640px; }

@@ -5,8 +5,8 @@ use std::time::{Duration, Instant};
 
 use fabio_core::{
     AuditEntry, AuditLog, CompletionTable, Count, Db, ExportFormat, Filter, Insights, NewAuditEntry, Page, PageRequest,
-    PgTarget, Plan, QueryResult, Relation, RelationRef, ResultColumn, Rows, SavedConnection, Sort, Source, Store,
-    TableInfo, Target, format_rows,
+    PgTarget, Plan, QueryResult, Relation, RelationRef, ResultColumn, RowUpdate, Rows, SavedConnection, Sort, Source,
+    Store, TableInfo, Target, format_rows,
 };
 use serde::Serialize;
 use tauri::{Manager, State};
@@ -214,6 +214,42 @@ fn copy_rows(columns: Vec<ResultColumn>, rows: Rows, format: ExportFormat, table
     format_rows(format, &columns, &rows, table.as_ref()).map_err(err)
 }
 
+/// The UPDATEs a save would run, for the user to read first.
+#[tauri::command]
+async fn preview_updates(
+    app: State<'_, App>,
+    id: String,
+    relation: RelationRef,
+    updates: Vec<RowUpdate>,
+) -> Res<Vec<String>> {
+    app.db(&id)?.update_statements(&relation, &updates).await.map_err(err)
+}
+
+/// Saves cell edits in one transaction on a writable connection of its own
+/// (browsing stays read-only), and records them like any typed statement.
+#[tauri::command]
+async fn apply_updates(app: State<'_, App>, id: String, relation: RelationRef, updates: Vec<RowUpdate>) -> Res<u64> {
+    let db = app.open_db(&id).await?;
+    let sql = db.update_statements(&relation, &updates).await.map_err(err)?.join("\n");
+    let started = Instant::now();
+    let applied = match db.set_writable(true).await {
+        Ok(()) => db.apply_updates(&relation, &updates).await,
+        Err(e) => Err(e),
+    };
+    let entry = NewAuditEntry {
+        connection_id: id,
+        source: Source::Human,
+        sql,
+        elapsed_ms: started.elapsed().as_secs_f64() * 1000.0,
+        rows: applied.as_ref().ok().copied(),
+        error: applied.as_ref().err().map(ToString::to_string),
+    };
+    if let Err(e) = app.audit.record(&entry) {
+        eprintln!("audit log: {e}");
+    }
+    applied.map_err(err)
+}
+
 #[tauri::command]
 async fn completion_schema(app: State<'_, App>, id: String) -> Res<Vec<CompletionTable>> {
     app.db(&id)?.completion_schema().await.map_err(err)
@@ -348,6 +384,8 @@ pub fn run() {
             export_table,
             export_rows,
             copy_rows,
+            preview_updates,
+            apply_updates,
             open_session,
             close_session,
             set_write_mode,

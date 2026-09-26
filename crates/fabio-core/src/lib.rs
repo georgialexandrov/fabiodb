@@ -10,6 +10,7 @@
 
 mod agent;
 mod audit;
+mod edit;
 mod export;
 mod insights;
 mod plan;
@@ -25,6 +26,7 @@ use serde::{Deserialize, Serialize};
 
 pub use agent::{Agent, AgentConnection, Limits, Passwords, ReadOnlyDb};
 pub use audit::{AuditEntry, AuditLog, NewAuditEntry, Source};
+pub use edit::{CellChange, ColumnValue, RowUpdate};
 pub use export::{ExportFormat, RowWriter, format_rows};
 pub use insights::{Activity, Insights, SeqScanTable, TopStatement, UnusedIndex};
 pub use plan::{Detail, Finding, Plan, PlanNode, Severity};
@@ -143,6 +145,25 @@ impl Db {
         match self {
             Db::Postgres(pg) => pg.export_table(relation, sort, filters, format, path).await,
             Db::Sqlite(lite) => lite.export_table(relation, sort, filters, format, path).await,
+        }
+    }
+
+    /// The UPDATEs `apply_updates` would run, as the user should read them.
+    pub async fn update_statements(&self, relation: &RelationRef, updates: &[RowUpdate]) -> Result<Vec<String>> {
+        let info = self.describe(relation).await?;
+        edit::validate(&info, relation, updates)?;
+        let from = format!("{}.{}", sql::quote(&relation.schema), sql::quote(&relation.name));
+        updates.iter().map(|u| edit::display(&from, &info, u)).collect()
+    }
+
+    /// Runs the edits in one transaction. Each must hit exactly its row with
+    /// the values the user saw, or nothing is saved. Needs a writable connection.
+    pub async fn apply_updates(&self, relation: &RelationRef, updates: &[RowUpdate]) -> Result<u64> {
+        let info = self.describe(relation).await?;
+        edit::validate(&info, relation, updates)?;
+        match self {
+            Db::Postgres(pg) => pg.apply_updates(relation, &info, updates).await,
+            Db::Sqlite(lite) => lite.apply_updates(relation, info, updates).await,
         }
     }
 

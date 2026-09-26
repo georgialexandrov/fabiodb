@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { chooseFile, ExportMenu } from "./ExportMenu";
-import { Grid } from "./Grid";
+import { Grid, type GridEdit } from "./Grid";
 import { Structure } from "./Structure";
 import {
   api,
   fileName,
   plural,
+  type ColumnValue,
   type Count,
   type ExportFormat,
   type Filter,
@@ -13,6 +14,7 @@ import {
   type Page,
   type Relation,
   type RelationRef,
+  type RowUpdate,
   type Rows,
   type Sort,
   type TableInfo,
@@ -38,6 +40,9 @@ const needsValue = (op: FilterOp) => op !== "is_null" && op !== "is_not_null";
 
 type Props = { connectionId: string; relation: Relation; onOpen: (r: RelationRef) => void };
 
+/** Unsaved edits of one row, keyed by column name. */
+type PendingRow = { key: ColumnValue[]; changes: Record<string, { old: string | null; new: string | null }> };
+
 export function TableView({ connectionId, relation, onOpen }: Props) {
   const [tab, setTab] = useState<"data" | "structure">("data");
   const [info, setInfo] = useState<TableInfo | null>(null);
@@ -55,6 +60,11 @@ export function TableView({ connectionId, relation, onOpen }: Props) {
   const [jump, setJump] = useState<{ row: number; nonce: number } | null>(null);
   const [base, setBase] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
+  // Keyed by the row's primary-key values, so edits survive sorting and paging.
+  const [edits, setEdits] = useState<Record<string, PendingRow>>({});
+  const [review, setReview] = useState<{ sql: string[]; error: string | null; saving: boolean } | null>(null);
+  const [reloads, setReloads] = useState(0);
+  const root = useRef<HTMLDivElement>(null);
   const generation = useRef(0);
   const requested = useRef(new Set<number>());
 
@@ -63,6 +73,7 @@ export function TableView({ connectionId, relation, onOpen }: Props) {
     setDraft([]);
     setFilters([]);
     setInfo(null);
+    setEdits({});
     api.describe(connectionId, relation).then(setInfo, (e) => setError(String(e)));
   }, [connectionId, relation.schema, relation.name]);
 
@@ -81,7 +92,7 @@ export function TableView({ connectionId, relation, onOpen }: Props) {
         setError(String(e));
       }
     },
-    [connectionId, relation.schema, relation.name, sort, filters],
+    [connectionId, relation.schema, relation.name, sort, filters, reloads],
   );
 
   // Reset whenever what we're looking at changes.
@@ -150,6 +161,92 @@ export function TableView({ connectionId, relation, onOpen }: Props) {
   }
 
   const columns = info?.columns ?? [];
+  const pkIndexes = columns.flatMap((c, i) => (c.primary_key ? [i] : []));
+  const rowAt = (i: number) => pages[Math.floor((base + i) / PAGE_SIZE)]?.[(base + i) % PAGE_SIZE];
+  const keyOf = (r: (string | null)[]) => JSON.stringify(pkIndexes.map((i) => r[i]));
+  const changeCount = Object.values(edits).reduce((n, e) => n + Object.keys(e.changes).length, 0);
+
+  const edit: GridEdit = {
+    blocked:
+      relation.kind !== "table"
+        ? `${relation.name} is a view. Edit the table it reads from.`
+        : info && pkIndexes.length === 0
+          ? `${relation.schema}.${relation.name} has no primary key, so a row can't be picked out safely. Use an UPDATE in a query tab.`
+          : null,
+    onBlocked: setNotice,
+    nullable: columns.map((c) => c.nullable),
+    pending(i, c) {
+      const r = rowAt(i);
+      const change = r && edits[keyOf(r)]?.changes[columns[c].name];
+      return change ? change.new : undefined;
+    },
+    onEdit(i, c, value) {
+      const r = rowAt(i);
+      if (!r) return;
+      const key = keyOf(r);
+      const name = columns[c].name;
+      setEdits((all) => {
+        const row: PendingRow = all[key] ?? { key: pkIndexes.map((p) => ({ column: columns[p].name, value: r[p] })), changes: {} };
+        const changes = { ...row.changes };
+        // Back to what was loaded = no change.
+        if (value === r[c]) delete changes[name];
+        else changes[name] = { old: r[c], new: value };
+        const { [key]: _, ...rest } = all;
+        return Object.keys(changes).length ? { ...rest, [key]: { ...row, changes } } : rest;
+      });
+    },
+  };
+
+  const updates = (): RowUpdate[] =>
+    Object.values(edits).map((e) => ({
+      key: e.key,
+      changes: Object.entries(e.changes).map(([column, c]) => ({ column, old: c.old, new: c.new })),
+    }));
+
+  async function startReview() {
+    if (changeCount === 0) return;
+    try {
+      setReview({ sql: await api.previewUpdates(connectionId, relation, updates()), error: null, saving: false });
+    } catch (e) {
+      setNotice(String(e));
+    }
+  }
+
+  async function save() {
+    if (!review) return;
+    setReview({ ...review, saving: true, error: null });
+    const started = performance.now();
+    try {
+      const rows = await api.applyUpdates(connectionId, relation, updates());
+      setEdits({});
+      setReview(null);
+      setReloads((n) => n + 1);
+      setNotice(`Saved ${plural(rows, "row")} · ${Math.round(performance.now() - started)} ms`);
+    } catch (e) {
+      setReview({ ...review, saving: false, error: String(e) });
+    }
+  }
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (!root.current?.offsetParent) return;
+      if (review && !review.saving && (e.key === "Enter" || e.key === "Escape")) {
+        // Buttons don't reliably take focus in WebKit, so the dialog listens itself.
+        e.preventDefault();
+        if (e.key === "Enter") save();
+        else setReview(null);
+      } else if ((e.metaKey || e.ctrlKey) && e.key === "s") {
+        e.preventDefault();
+        startReview();
+      } else if ((e.metaKey || e.ctrlKey) && e.key === "r") {
+        // Reload rows and the count. Unsaved edits stay, still checked against what was loaded.
+        e.preventDefault();
+        setReloads((n) => n + 1);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
 
   /** Every row under the current sort and filters, streamed to a file by the core. */
   async function exportTable(format: ExportFormat) {
@@ -161,7 +258,7 @@ export function TableView({ connectionId, relation, onOpen }: Props) {
   }
 
   return (
-    <div className="table-view">
+    <div className="table-view" ref={root}>
       <div className="toolbar" data-tauri-drag-region>
         <div className="title">
           <span className="muted">{relation.schema}.</span>
@@ -253,14 +350,53 @@ export function TableView({ connectionId, relation, onOpen }: Props) {
             sort={sort}
             onSort={setSort}
             scrollTo={jump}
+            edit={edit}
           />
         )
       ) : (
         info && <Structure info={info} relation={relation} onOpen={onOpen} />
       )}
 
+      {tab === "data" && changeCount > 0 && (
+        <div className="edit-bar">
+          <span>{plural(changeCount, "unsaved change")}</span>
+          <span className="grow" />
+          <button className="ghost" onClick={() => setEdits({})}>
+            Discard
+          </button>
+          <button className="primary" onClick={startReview} title="Review the UPDATE statements (⌘S)">
+            Save…
+          </button>
+        </div>
+      )}
+
+      {review && (
+        <div className="modal-backdrop" onMouseDown={() => !review.saving && setReview(null)}>
+          <div
+            className="modal wide"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <h2>
+              Save {plural(changeCount, "change")} to {relation.schema}.{relation.name}?
+            </h2>
+            <p className="muted">Runs in one transaction. If any row changed since it was loaded, nothing is saved.</p>
+            <pre className="sql-preview">{review.sql.join("\n")}</pre>
+            {review.error && <p className="error">{review.error}</p>}
+            <div className="actions">
+              <span className="grow" />
+              <button onClick={() => setReview(null)} disabled={review.saving}>
+                Cancel
+              </button>
+              <button className="primary" onClick={save} disabled={review.saving} title="↵">
+                {review.saving ? "Saving…" : "Save"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {tab === "data" && meta && (
-        <footer className="status pager" title={meta.sql}>
+        <footer className="status pager" title={`${meta.sql}\n⌘R reloads`}>
           <button className="ghost" disabled={currentPage <= 1} onClick={() => goTo(currentPage - 1)}>
             ‹
           </button>
