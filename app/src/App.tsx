@@ -4,6 +4,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { AgentView, explainMode, formatMs } from "./AgentView";
 import { CommandPalette, type Command } from "./CommandPalette";
 import { ConnectionForm } from "./ConnectionForm";
+import { DiscoverDialog } from "./DiscoverDialog";
 import { ConnectionSwitcher, describe, markUsed } from "./ConnectionSwitcher";
 import { InsightsView } from "./InsightsView";
 import { QueryTab } from "./QueryTab";
@@ -14,6 +15,7 @@ import {
   compactCount,
   sameRelation,
   type AuditEntry,
+  type Discovery,
   type CompletionTable,
   type Relation,
   type RelationRef,
@@ -52,6 +54,7 @@ export default function App() {
   const [theme, setTheme] = useState<Theme>(savedTheme);
   const [palette, setPalette] = useState(false);
   const [switcher, setSwitcher] = useState(false);
+  const [discovered, setDiscovered] = useState<{ folder: string; discovery: Discovery } | null>(null);
   const [snippets, setSnippets] = useState<Snippet[]>([]);
 
   // Snippets are saved from query tabs; read them fresh whenever ⌘K opens.
@@ -177,6 +180,14 @@ export default function App() {
     if (typeof path === "string") await openSqlite(path);
   }
 
+  /** A project folder: offer the Compose services and SQLite files in it. */
+  async function scanFolder() {
+    setSwitcher(false);
+    const folder = await open({ directory: true, multiple: false });
+    if (typeof folder !== "string") return;
+    setDiscovered({ folder, discovery: await api.discoverFolder(folder) });
+  }
+
   useEffect(() => {
     const unlisten = getCurrentWebview().onDragDropEvent((e) => {
       if (e.payload.type !== "drop") return;
@@ -246,6 +257,7 @@ export default function App() {
     ...(current ? [{ id: "close", label: "Close tab", shortcut: "⌘W", run: () => closeTab(current) }] : []),
     { id: "new", label: "New Postgres connection", shortcut: "⌘N", run: () => setEditing(null) },
     { id: "sqlite", label: "Open SQLite file", shortcut: "⌘O", run: () => chooseSqlite().catch((e) => setError(String(e))) },
+    { id: "docker", label: "Find databases in a folder (Docker Compose, SQLite)", run: () => scanFolder().catch((e) => setError(String(e))) },
     ...(["system", "light", "dark"] as Theme[])
       .filter((t) => t !== theme)
       .map((t) => ({ id: `theme-${t}`, label: `Theme: ${THEME_LABELS[t]}`, shortcut: "⇧⌘L", run: () => setTheme(t) })),
@@ -325,6 +337,7 @@ export default function App() {
               onEdit={(c) => (setSwitcher(false), setEditing(c))}
               onNew={() => (setSwitcher(false), setEditing(null))}
               onOpenSqlite={() => (setSwitcher(false), chooseSqlite().catch((e) => setError(String(e))))}
+              onScanFolder={() => scanFolder().catch((e) => setError(String(e)))}
               onClose={() => setSwitcher(false)}
             />
           )}
@@ -464,6 +477,7 @@ export default function App() {
               onEdit={setEditing}
               onNew={() => setEditing(null)}
               onOpenSqlite={() => chooseSqlite().catch((e) => setError(String(e)))}
+              onScanFolder={() => scanFolder().catch((e) => setError(String(e)))}
             />
           </div>
         )}
@@ -477,6 +491,21 @@ export default function App() {
       </main>
 
       {palette && <CommandPalette commands={commands} onClose={() => setPalette(false)} />}
+
+      {discovered && (
+        <DiscoverDialog
+          folder={discovered.folder}
+          discovery={discovered.discovery}
+          existing={connections}
+          onClose={() => setDiscovered(null)}
+          onSaved={async (added) => {
+            setDiscovered(null);
+            setConnections(await api.listConnections());
+            if (added.length === 1) await activate(added[0]);
+            else if (added.length > 1) setSwitcher(true);
+          }}
+        />
+      )}
 
       {editing !== undefined && (
         <ConnectionForm

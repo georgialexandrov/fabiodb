@@ -377,3 +377,8 @@ button:disabled { opacity: 0.4; }
 .switcher-actions kbd { font: 10px var(--mono); color: var(--muted); margin-left: 4px; }
 .switcher .hint { padding: 8px 10px; margin: 0; }
 .start { flex: 1; display: grid; place-items: center; padding: 32px 0; min-height: 0; }
+.discover-list { max-height: 360px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+.discover-item { flex-direction: row !important; align-items: flex-start !important; gap: 8px !important; padding: 8px 10px; border-bottom: 1px solid var(--line); font-size: 13px !important; color: var(--text) !important; }
+.discover-item:last-child { border-bottom: 0; }
+.discover-item input { margin-top: 3px; }
+.discover-note { font-size: 11px; color: var(--accent); margin-top: 2px; white-space: normal; }

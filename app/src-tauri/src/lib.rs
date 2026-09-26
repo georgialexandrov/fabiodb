@@ -4,9 +4,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use fabio_core::{
-    AuditEntry, AuditLog, CompletionTable, Count, Db, ExportFormat, Filter, Insights, NewAuditEntry, Page, PageRequest,
-    PgTarget, Plan, QueryResult, Relation, RelationRef, ResultColumn, RowUpdate, Rows, SavedConnection, Snippet,
-    Snippets, Sort, Source, Store, TableInfo, Target, format_rows,
+    AuditEntry, AuditLog, CompletionTable, Count, Db, Discovery, ExportFormat, Filter, Insights, NewAuditEntry, Page,
+    PageRequest, PgTarget, Plan, QueryResult, Relation, RelationRef, ResultColumn, RowUpdate, Rows, SavedConnection,
+    Snippet, Snippets, Sort, Source, Store, TableInfo, Target, format_rows,
 };
 use serde::Serialize;
 use tauri::{Manager, State};
@@ -137,6 +137,12 @@ async fn test_connection(connection: SavedConnection, password: Option<String>) 
     };
     let result = db.query(sql).await.map_err(err)?;
     Ok(result.rows[0][0].clone().unwrap_or_default())
+}
+
+/// Databases in a project folder (Compose services, SQLite files), to pick from.
+#[tauri::command]
+async fn discover_folder(path: PathBuf) -> Res<Discovery> {
+    tauri::async_runtime::spawn_blocking(move || fabio_core::discover(&path)).await.map_err(err)?.map_err(err)
 }
 
 #[tauri::command]
@@ -391,6 +397,7 @@ pub fn run() {
             delete_connection,
             test_connection,
             open_sqlite_file,
+            discover_folder,
             connect,
             disconnect,
             relations,

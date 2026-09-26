@@ -124,6 +124,10 @@ export type Insights = {
   }[];
 };
 
+export type Discovered = { name: string; target: Target; source: string; note: string | null };
+
+export type Discovery = { found: Discovered[]; problems: string[] };
+
 export type Snippet = { id: string; name: string; sql: string };
 
 export type ColumnValue = { column: string; value: string | null };
@@ -155,6 +159,7 @@ export const api = {
   deleteConnection: (id: string) => invoke<void>("delete_connection", { id }),
   testConnection: (connection: SavedConnection, password: string | null) =>
     invoke<string>("test_connection", { connection, password }),
+  discoverFolder: (path: string) => invoke<Discovery>("discover_folder", { path }),
   openSqliteFile: (path: string) => invoke<SavedConnection>("open_sqlite_file", { path }),
   connect: (id: string) => invoke<Relation[]>("connect", { id }),
   disconnect: (id: string) => invoke<void>("disconnect", { id }),
