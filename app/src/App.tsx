@@ -2,18 +2,33 @@ import { useEffect, useMemo, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { ConnectionForm } from "./ConnectionForm";
-import { QueryView } from "./QueryView";
+import { QueryTab } from "./QueryTab";
 import { TableView } from "./TableView";
-import { api, compactCount, sameRelation, type Relation, type RelationRef, type SavedConnection } from "./api";
+import {
+  api,
+  compactCount,
+  sameRelation,
+  type CompletionTable,
+  type Relation,
+  type RelationRef,
+  type SavedConnection,
+} from "./api";
 
 const SQLITE_EXTENSIONS = /\.(db|sqlite|sqlite3|db3)$/i;
+
+type Tab =
+  | { id: string; connectionId: string; kind: "table"; relation: RelationRef }
+  | { id: string; connectionId: string; kind: "query"; title: string; sql: string };
+
+let nextTab = 1;
 
 export default function App() {
   const [connections, setConnections] = useState<SavedConnection[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [relations, setRelations] = useState<Relation[]>([]);
-  const [selected, setSelected] = useState<RelationRef | null>(null);
-  const [view, setView] = useState<"table" | "sql">("table");
+  const [relations, setRelations] = useState<Record<string, Relation[]>>({});
+  const [schemas, setSchemas] = useState<Record<string, CompletionTable[]>>({});
+  const [tabs, setTabs] = useState<Tab[]>([]);
+  const [activeTab, setActiveTab] = useState<Record<string, string | null>>({});
   const [editing, setEditing] = useState<SavedConnection | null | undefined>(undefined);
   const [search, setSearch] = useState("");
   const [connecting, setConnecting] = useState<string | null>(null);
@@ -24,20 +39,60 @@ export default function App() {
   }, []);
 
   async function activate(connection: SavedConnection) {
-    setConnecting(connection.id);
     setError(null);
+    if (relations[connection.id]) {
+      setActiveId(connection.id);
+      return;
+    }
+    setConnecting(connection.id);
     try {
       const rels = await api.connect(connection.id);
+      setRelations((r) => ({ ...r, [connection.id]: rels }));
       setActiveId(connection.id);
-      setRelations(rels);
-      setSelected(null);
       setSearch("");
-      setView("table");
+      api.completionSchema(connection.id).then((s) => setSchemas((all) => ({ ...all, [connection.id]: s })), () => {});
     } catch (e) {
       setError(`${connection.name}: ${e}`);
     } finally {
       setConnecting(null);
     }
+  }
+
+  function focusTab(tab: Tab) {
+    setActiveTab((a) => ({ ...a, [tab.connectionId]: tab.id }));
+  }
+
+  function openTable(relation: RelationRef) {
+    if (!activeId) return;
+    const existing = tabs.find((t) => t.connectionId === activeId && t.kind === "table" && sameRelation(t.relation, relation));
+    if (existing) return focusTab(existing);
+    const tab: Tab = { id: `t${nextTab++}`, connectionId: activeId, kind: "table", relation };
+    setTabs((all) => [...all, tab]);
+    focusTab(tab);
+  }
+
+  function newQuery(connectionId = activeId) {
+    if (!connectionId) return;
+    const n = tabs.filter((t) => t.connectionId === connectionId && t.kind === "query").length + 1;
+    const tab: Tab = { id: `t${nextTab++}`, connectionId, kind: "query", title: `Query ${n}`, sql: "" };
+    setTabs((all) => [...all, tab]);
+    focusTab(tab);
+  }
+
+  function closeTab(id: string) {
+    const tab = tabs.find((t) => t.id === id);
+    if (!tab) return;
+    const siblings = tabs.filter((t) => t.connectionId === tab.connectionId);
+    const index = siblings.findIndex((t) => t.id === id);
+    const next = siblings[index + 1] ?? siblings[index - 1] ?? null;
+    setTabs((all) => all.filter((t) => t.id !== id));
+    setActiveTab((a) => ({ ...a, [tab.connectionId]: a[tab.connectionId] === id ? (next?.id ?? null) : a[tab.connectionId] }));
+  }
+
+  function forget(connectionId: string) {
+    setTabs((all) => all.filter((t) => t.connectionId !== connectionId));
+    setRelations(({ [connectionId]: _, ...rest }) => rest);
+    if (connectionId === activeId) setActiveId(null);
   }
 
   async function openSqlite(path: string) {
@@ -65,33 +120,36 @@ export default function App() {
     };
   }, []);
 
+  const current = activeId ? (activeTab[activeId] ?? null) : null;
+
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (!(e.metaKey || e.ctrlKey)) return;
-      if (e.key === "o") {
-        e.preventDefault();
-        chooseSqlite().catch((err) => setError(String(err)));
-      } else if (e.key === "n") {
-        e.preventDefault();
-        setEditing(null);
-      }
+      const key = e.key.toLowerCase();
+      if (key === "o") chooseSqlite().catch((err) => setError(String(err)));
+      else if (key === "n") setEditing(null);
+      else if (key === "t") newQuery();
+      else if (key === "w" && current) closeTab(current);
+      else return;
+      e.preventDefault();
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  });
 
   const grouped = useMemo(() => {
     const q = search.toLowerCase();
     const groups = new Map<string, Relation[]>();
-    for (const r of relations) {
+    for (const r of (activeId && relations[activeId]) || []) {
       if (q && !r.name.toLowerCase().includes(q)) continue;
       groups.set(r.schema, [...(groups.get(r.schema) ?? []), r]);
     }
     return groups;
-  }, [relations, search]);
+  }, [relations, activeId, search]);
 
   const active = connections.find((c) => c.id === activeId) ?? null;
-  const selectedRelation = relations.find((r) => sameRelation(r, selected)) ?? null;
+  const activeTabs = tabs.filter((t) => t.connectionId === activeId);
+  const currentTab = tabs.find((t) => t.id === current) ?? null;
 
   return (
     <div className="app">
@@ -118,6 +176,7 @@ export default function App() {
             >
               <span className={`engine ${c.target.engine}`}>{c.target.engine === "postgres" ? "PG" : "SQ"}</span>
               <span className="grow ellipsis">{connecting === c.id ? "Connecting…" : c.name}</span>
+              {relations[c.id] && <span className="dot" title="Connected" />}
               <button
                 className="ghost edit"
                 onClick={(e) => {
@@ -135,21 +194,18 @@ export default function App() {
           <div className="relations">
             <div className="relations-head">
               <input placeholder="Filter tables" value={search} onChange={(e) => setSearch(e.target.value)} spellCheck={false} />
-              <button className={`ghost ${view === "sql" ? "on" : ""}`} onClick={() => setView("sql")} title="SQL">
+              <button className="ghost" onClick={() => newQuery()} title="New query (⌘T)">
                 SQL
               </button>
             </div>
             {[...grouped].map(([schema, rels]) => (
               <div key={schema}>
-                {grouped.size > 1 || schema !== "public" ? <div className="schema">{schema}</div> : null}
+                {grouped.size > 1 || (schema !== "public" && schema !== "main") ? <div className="schema">{schema}</div> : null}
                 {rels.map((r) => (
                   <div
                     key={r.name}
-                    className={`relation ${r.kind} ${view === "table" && sameRelation(r, selected) ? "active" : ""}`}
-                    onClick={() => {
-                      setSelected(r);
-                      setView("table");
-                    }}
+                    className={`relation ${r.kind} ${currentTab?.kind === "table" && sameRelation(r, currentTab.relation) ? "active" : ""}`}
+                    onClick={() => openTable(r)}
                   >
                     <span className="grow ellipsis">{r.name}</span>
                     {r.estimated_rows != null && <span className="count">{compactCount(r.estimated_rows)}</span>}
@@ -162,26 +218,66 @@ export default function App() {
       </aside>
 
       <main className="content">
+        {active && activeTabs.length > 0 && (
+          <div className="tabs" data-tauri-drag-region>
+            {activeTabs.map((t) => (
+              <div key={t.id} className={`tab ${t.id === current ? "active" : ""}`} onClick={() => focusTab(t)} onAuxClick={() => closeTab(t.id)}>
+                <span className={`tab-kind ${t.kind}`}>{t.kind === "query" ? "SQL" : ""}</span>
+                <span className="ellipsis">{t.kind === "query" ? t.title : t.relation.name}</span>
+                <button
+                  className="ghost tab-close"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    closeTab(t.id);
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+            <button className="ghost new-tab" onClick={() => newQuery()} title="New query (⌘T)">
+              +
+            </button>
+          </div>
+        )}
+
         {error && (
           <p className="error banner" onClick={() => setError(null)}>
             {error}
           </p>
         )}
-        {active && view === "sql" && <QueryView key={active.id} connectionId={active.id} />}
-        {active && view === "table" && selectedRelation && (
-          <TableView
-            connectionId={active.id}
-            relation={selectedRelation}
-            onOpen={(r) => {
-              setSelected(r);
-              setView("table");
-            }}
-          />
-        )}
-        {(!active || (view === "table" && !selectedRelation)) && (
+
+        {/* Every open tab stays mounted, so switching keeps scroll, filters and results. */}
+        {tabs.map((t) => {
+          const conn = connections.find((c) => c.id === t.connectionId);
+          const visible = t.id === current && t.connectionId === activeId;
+          if (!conn) return null;
+          if (t.kind === "query") {
+            return (
+              <QueryTab
+                key={t.id}
+                connectionId={t.connectionId}
+                engine={conn.target.engine}
+                schema={schemas[t.connectionId] ?? []}
+                sql={t.sql}
+                onSqlChange={(sql) => setTabs((all) => all.map((x) => (x.id === t.id ? { ...x, sql } : x)))}
+                visible={visible}
+              />
+            );
+          }
+          const relation = relations[t.connectionId]?.find((r) => sameRelation(r, t.relation));
+          if (!relation) return null;
+          return (
+            <div key={t.id} className="tab-page" style={{ display: visible ? "flex" : "none" }}>
+              <TableView connectionId={t.connectionId} relation={relation} onOpen={openTable} />
+            </div>
+          );
+        })}
+
+        {(!active || !currentTab) && (
           <div className="empty">
-            <div className="marmot">Fabio</div>
-            <p className="muted">{active ? "Pick a table." : "Pick a connection, or drop a SQLite file here."}</p>
+            <img className="marmot" src="/fabio.png" alt="Fabio the marmot" width={96} height={96} />
+            <p className="muted">{active ? "Pick a table, or ⌘T for a new query." : "Pick a connection, or drop a SQLite file here."}</p>
           </div>
         )}
       </main>
@@ -192,15 +288,13 @@ export default function App() {
           onClose={() => setEditing(undefined)}
           onSaved={async (c) => {
             setEditing(undefined);
+            forget(c.id);
             setConnections(await api.listConnections());
             await activate(c);
           }}
           onDeleted={async (id) => {
             setEditing(undefined);
-            if (id === activeId) {
-              setActiveId(null);
-              setRelations([]);
-            }
+            forget(id);
             setConnections(await api.listConnections());
           }}
         />

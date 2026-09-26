@@ -27,6 +27,12 @@ export function ConnectionForm({ initial, onSaved, onDeleted, onClose }: Props) 
     if (initial?.id) api.hasPassword(initial.id).then(setHasSaved, () => {});
   }, [initial?.id]);
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
   const t = conn.target;
   const setTarget = (patch: Partial<Target>) => setConn({ ...conn, target: { ...t, ...patch } as Target });
 
@@ -82,7 +88,7 @@ export function ConnectionForm({ initial, onSaved, onDeleted, onClose }: Props) 
 
         <label>
           Name
-          <input value={conn.name} onChange={(e) => setConn({ ...conn, name: e.target.value })} placeholder="optional" />
+          <input autoFocus value={conn.name} onChange={(e) => setConn({ ...conn, name: e.target.value })} placeholder="optional" />
         </label>
 
         {t.engine === "postgres" ? (

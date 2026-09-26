@@ -29,6 +29,9 @@ def rss_mb(pids):
 def startup(runs):
     wall, inner = [], []
     env = {**os.environ, "FABIO_EXIT_ON_READY": "1"}
+    # One unmeasured launch first: right after a build the disk cache is cold
+    # and the first start is 3-4x slower than any real-world launch.
+    subprocess.run([BIN], env=env, capture_output=True, timeout=30)
     for _ in range(runs):
         t = time.perf_counter()
         out = subprocess.run([BIN], env=env, capture_output=True, text=True, timeout=30).stdout

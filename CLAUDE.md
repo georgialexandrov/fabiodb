@@ -14,7 +14,8 @@ Postgres + SQLite desktop client. Tauri 2 + Rust core + React. Plan and phases: 
   shares it.
 - Agent access is read-only, enforced at the connection (`default_transaction_read_only`,
   `statement_timeout`, row cap). Never rely on the prompt for safety.
-- Every statement goes through the audit log.
+- Every statement a human types or an agent runs goes through the audit log
+  (`AuditLog`). Browsing (page/count/describe) doesn't — it would drown history.
 - Performance budgets in `PLAN.md` are hard limits; record measurements in `BENCHMARKS.md`.
 - Finish the current phase's exit criteria before starting the next.
 
@@ -22,6 +23,7 @@ Postgres + SQLite desktop client. Tauri 2 + Rust core + React. Plan and phases: 
 
 - `dev/pg.sh start|stop|psql|reset` — local Postgres on :54329 with Chinook
 - `cargo test -p fabio-core` — core tests (needs dev Postgres running)
+- `cd app && pnpm test` — frontend unit tests (Vitest)
 - `cd app && pnpm tauri dev` — run the app
 - `cd app && pnpm tauri build --bundles app && python3 bench/startup.py` — budgets
 - Rust comes from Homebrew rustup: `export PATH=/opt/homebrew/opt/rustup/bin:$PATH`

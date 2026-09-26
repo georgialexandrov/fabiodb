@@ -4,9 +4,10 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use fabio_core::{
-    Count, Db, Filter, Page, PageRequest, PgTarget, QueryResult, Relation, RelationRef, SavedConnection, Store,
-    TableInfo, Target,
+    AuditEntry, AuditLog, CompletionTable, Count, Db, Filter, NewAuditEntry, Page, PageRequest, PgTarget,
+    QueryResult, Relation, RelationRef, SavedConnection, Source, Store, TableInfo, Target,
 };
+use serde::Serialize;
 use tauri::{Manager, State};
 
 static STARTED: OnceLock<Instant> = OnceLock::new();
@@ -14,7 +15,23 @@ const KEYCHAIN_SERVICE: &str = "dev.fabio.app";
 
 struct App {
     store: Store,
+    audit: AuditLog,
+    /// One read-only connection per saved connection, for browsing.
     open: Mutex<HashMap<String, Arc<Db>>>,
+    /// One connection per query tab, so tabs have their own session and write mode.
+    sessions: Mutex<HashMap<String, Session>>,
+}
+
+struct Session {
+    connection_id: String,
+    db: Arc<Db>,
+}
+
+/// A failed statement, with where it failed when the database says.
+#[derive(Serialize)]
+struct QueryError {
+    message: String,
+    position: Option<u32>,
 }
 
 type Res<T> = Result<T, String>;
@@ -49,6 +66,20 @@ fn with_password(mut target: Target, id: &str, password: Option<String>) -> Res<
 }
 
 impl App {
+    fn session(&self, id: &str) -> Res<(String, Arc<Db>)> {
+        self.sessions
+            .lock()
+            .unwrap()
+            .get(id)
+            .map(|s| (s.connection_id.clone(), s.db.clone()))
+            .ok_or_else(|| "query tab is closed".to_string())
+    }
+
+    async fn open_db(&self, connection_id: &str) -> Res<Db> {
+        let saved = self.store.get(connection_id).map_err(err)?;
+        Db::open(&with_password(saved.target, connection_id, None)?).await.map_err(err)
+    }
+
     fn db(&self, id: &str) -> Res<Arc<Db>> {
         self.open
             .lock()
@@ -118,8 +149,7 @@ fn open_sqlite_file(app: State<App>, path: PathBuf) -> Res<SavedConnection> {
 
 #[tauri::command]
 async fn connect(app: State<'_, App>, id: String) -> Res<Vec<Relation>> {
-    let saved = app.store.get(&id).map_err(err)?;
-    let db = Arc::new(Db::open(&with_password(saved.target, &id, None)?).await.map_err(err)?);
+    let db = Arc::new(app.open_db(&id).await?);
     let relations = db.relations().await.map_err(err)?;
     app.open.lock().unwrap().insert(id, db);
     Ok(relations)
@@ -154,8 +184,57 @@ async fn page(app: State<'_, App>, id: String, request: PageRequest) -> Res<Page
 }
 
 #[tauri::command]
-async fn run_query(app: State<'_, App>, id: String, sql: String) -> Res<QueryResult> {
-    app.db(&id)?.query(&sql).await.map_err(err)
+async fn completion_schema(app: State<'_, App>, id: String) -> Res<Vec<CompletionTable>> {
+    app.db(&id)?.completion_schema().await.map_err(err)
+}
+
+/// Opens a query tab's own connection; returns the session id.
+#[tauri::command]
+async fn open_session(app: State<'_, App>, connection_id: String) -> Res<String> {
+    let db = Arc::new(app.open_db(&connection_id).await?);
+    let id = format!("{connection_id}:{:x}", Instant::now().duration_since(*STARTED.get().unwrap()).as_nanos());
+    app.sessions.lock().unwrap().insert(id.clone(), Session { connection_id, db });
+    Ok(id)
+}
+
+#[tauri::command]
+fn close_session(app: State<App>, id: String) {
+    app.sessions.lock().unwrap().remove(&id);
+}
+
+#[tauri::command]
+async fn set_write_mode(app: State<'_, App>, id: String, writable: bool) -> Res<()> {
+    app.session(&id)?.1.set_writable(writable).await.map_err(err)
+}
+
+#[tauri::command]
+async fn cancel(app: State<'_, App>, id: String) -> Res<()> {
+    app.session(&id)?.1.canceller().cancel().await.map_err(err)
+}
+
+/// Runs a statement in a query tab and records it in the audit log.
+#[tauri::command]
+async fn run_statement(app: State<'_, App>, id: String, sql: String) -> Result<QueryResult, QueryError> {
+    let (connection_id, db) = app.session(&id).map_err(|message| QueryError { message, position: None })?;
+    let started = Instant::now();
+    let result = db.query(&sql).await;
+    let entry = NewAuditEntry {
+        connection_id,
+        source: Source::Human,
+        sql,
+        elapsed_ms: started.elapsed().as_secs_f64() * 1000.0,
+        rows: result.as_ref().ok().map(|r| r.rows.len() as u64),
+        error: result.as_ref().err().map(ToString::to_string),
+    };
+    if let Err(e) = app.audit.record(&entry) {
+        eprintln!("audit log: {e}");
+    }
+    result.map_err(|e| QueryError { message: e.to_string(), position: e.position() })
+}
+
+#[tauri::command]
+fn history(app: State<App>, connection_id: String, limit: u32) -> Res<Vec<AuditEntry>> {
+    app.audit.recent(Some(&connection_id), limit).map_err(err)
 }
 
 /// Called by the frontend after its first paint. With `FABIO_EXIT_ON_READY=1`
@@ -176,8 +255,15 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            let dir = app.path().app_config_dir()?;
-            app.manage(App { store: Store::new(dir.join("connections.json")), open: Mutex::default() });
+            let config = app.path().app_config_dir()?;
+            let data = app.path().app_data_dir()?;
+            std::fs::create_dir_all(&data)?;
+            app.manage(App {
+                store: Store::new(config.join("connections.json")),
+                audit: AuditLog::open(data.join("audit.sqlite"))?,
+                open: Mutex::default(),
+                sessions: Mutex::default(),
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -194,7 +280,13 @@ pub fn run() {
             describe,
             count,
             page,
-            run_query,
+            completion_schema,
+            open_session,
+            close_session,
+            set_write_mode,
+            cancel,
+            run_statement,
+            history,
             app_ready,
         ])
         .run(tauri::generate_context!())

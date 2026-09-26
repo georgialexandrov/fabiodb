@@ -48,7 +48,7 @@ Mascot: Fabio the marmot — sits by the burrow, whistles when something is wron
 | Frontend | React + TypeScript + Vite | Already known; lowest ramp |
 | Grid | `@tanstack/react-virtual` over DOM rows | Only on-screen rows exist; ~15 KB vs Glide's ~200 KB, which the start budget can't afford. Revisit Glide if 100k-row scroll misses 60 fps |
 | Editor | CodeMirror 6 | Light, extensible, good SQL mode |
-| Autocomplete | schema-aware completer (v1) → `postgres-language-server` sidecar (v2) | Ship simple first, swap in LSP when the simple one hurts |
+| Autocomplete | `@codemirror/lang-sql` with the live schema (v1) → `postgres-language-server` sidecar (v2) | Ship simple first, swap in LSP when the simple one hurts |
 | Formatter | `sql-formatter` (v1) | Preserves comments; `pg_query` deparse drops them |
 | Plan viewer | PEV2 (Dalibo) | Best EXPLAIN visualiser that exists; embed, don't rebuild |
 | Agent | MCP server binary sharing the core crate | Claude Code / pi drive it; no LLM vendor baked in |
@@ -121,7 +121,7 @@ current one's exit criteria hold.
   waits behind a slow count (≤ 2 s). Give counts their own connection if it bites.
 - **Exit:** you'd reach for Fabio instead of `psql` / `sqlite3` to look at a table.
 
-### Phase 2 — Query (weekend 2)
+### Phase 2 — Query (weekend 2) — 🟡 built 2026-09-26: tabs, editor, autocomplete, format, run statement/all, cancel, write mode, history, error position. Seen on screen: run, error underline, autocomplete. Left: snippets, alias-aware completion via pg_query
 - Tabs (unlimited — the whole point). Each tab has its own connection/session.
 - Editor: CodeMirror 6, run statement under cursor (⌘↵), run all (⇧⌘↵).
 - Autocomplete v1: keywords + schemas/tables/columns from an introspection cache,

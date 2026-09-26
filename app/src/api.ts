@@ -61,7 +61,22 @@ export type Page = {
 
 export type Count = { rows: number | null; exact: boolean };
 
-export type QueryResult = { columns: string[]; rows: Rows; elapsed_ms: number };
+export type QueryResult = { columns: string[]; rows: Rows; truncated: boolean; elapsed_ms: number };
+
+export type QueryError = { message: string; position: number | null };
+
+export type CompletionTable = { schema: string; name: string; columns: string[] };
+
+export type AuditEntry = {
+  id: number;
+  at_ms: number;
+  connection_id: string;
+  source: "human" | "agent";
+  sql: string;
+  elapsed_ms: number;
+  rows: number | null;
+  error: string | null;
+};
 
 export const api = {
   listConnections: () => invoke<SavedConnection[]>("list_connections"),
@@ -82,7 +97,13 @@ export const api = {
     id: string,
     request: { relation: RelationRef; sort: Sort | null; filters: Filter[]; offset: number; limit: number },
   ) => invoke<Page>("page", { id, request }),
-  runQuery: (id: string, sql: string) => invoke<QueryResult>("run_query", { id, sql }),
+  completionSchema: (id: string) => invoke<CompletionTable[]>("completion_schema", { id }),
+  openSession: (connectionId: string) => invoke<string>("open_session", { connectionId }),
+  closeSession: (id: string) => invoke<void>("close_session", { id }),
+  setWriteMode: (id: string, writable: boolean) => invoke<void>("set_write_mode", { id, writable }),
+  cancel: (id: string) => invoke<void>("cancel", { id }),
+  runStatement: (id: string, sql: string) => invoke<QueryResult>("run_statement", { id, sql }),
+  history: (connectionId: string, limit: number) => invoke<AuditEntry[]>("history", { connectionId, limit }),
 };
 
 export const sameRelation = (a: RelationRef | null, b: RelationRef | null) =>
