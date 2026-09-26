@@ -218,7 +218,7 @@ export function QueryTab({ connectionId, engine, schema, sql, onSqlChange, visib
             </div>
           )}
           {view === "plan" && plan ? (
-            <PlanView plan={plan.plan} previous={plan.previous} />
+            <PlanView plan={plan.plan} previous={plan.previous} engine={engine} />
           ) : (
             <>
           {result && !failure && result.truncated && (

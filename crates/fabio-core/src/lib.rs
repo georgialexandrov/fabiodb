@@ -4,13 +4,9 @@
 //! relations, describe one, page its rows. Values come back as text in the
 //! engine's own format; NULL stays `None`.
 
-/// Tags Fabio's own statements so they can be told apart from the user's in
-/// pg_stat_statements and server logs.
-macro_rules! internal {
-    ($sql:literal) => {
-        concat!("/* fabio */ ", $sql)
-    };
-}
+// Fabio's own statements carry `/* fabio */` right after the first keyword, so
+// they can be told apart from the user's in pg_stat_statements and server logs.
+// (A leading comment would be stripped by pg_stat_statements.)
 
 mod audit;
 mod insights;

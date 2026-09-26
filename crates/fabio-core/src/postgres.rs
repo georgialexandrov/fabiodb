@@ -94,7 +94,7 @@ impl Pg {
         let tz = iana_time_zone::get_timezone().unwrap_or_else(|_| "UTC".into());
         client
             .batch_execute(&format!(
-                "/* fabio */ SET default_transaction_read_only = on; SET TimeZone = '{}'",
+                "SET /* fabio */ default_transaction_read_only = on; SET /* fabio */ TimeZone = '{}'",
                 tz.replace('\'', "''")
             ))
             .await?;
@@ -142,9 +142,9 @@ impl Pg {
         let options = if analyze { "ANALYZE, BUFFERS, VERBOSE, FORMAT JSON" } else { "VERBOSE, FORMAT JSON" };
         // ANALYZE executes the statement; the rollback makes that harmless.
         let prefix = format!("EXPLAIN ({options}) ");
-        self.client.batch_execute(internal!("BEGIN")).await?;
+        self.client.batch_execute("BEGIN").await?;
         let explained = self.client.simple_query(&format!("{prefix}{sql}")).await;
-        let rolled_back = self.client.batch_execute(internal!("ROLLBACK")).await;
+        let rolled_back = self.client.batch_execute("ROLLBACK").await;
         // Report error positions against the user's statement, not our prefix.
         let messages = explained.map_err(|e| match Error::from(e) {
             Error::Postgres { message, position } => Error::Postgres {
@@ -170,14 +170,14 @@ impl Pg {
 
     pub async fn set_writable(&self, writable: bool) -> Result<()> {
         let value = if writable { "off" } else { "on" };
-        Ok(self.client.batch_execute(&format!("/* fabio */ SET default_transaction_read_only = {value}")).await?)
+        Ok(self.client.batch_execute(&format!("SET /* fabio */ default_transaction_read_only = {value}")).await?)
     }
 
     pub async fn relations(&self) -> Result<Vec<Relation>> {
         let rows = self
             .client
             .query(
-                internal!("SELECT n.nspname::text, c.relname::text, c.relkind::text,
+                "SELECT /* fabio */ n.nspname::text, c.relname::text, c.relkind::text,
                         CASE WHEN c.relkind IN ('r', 'm', 'p') AND c.reltuples >= 0
                              THEN c.reltuples::int8 END
                    FROM pg_class c
@@ -186,7 +186,7 @@ impl Pg {
                     AND n.nspname NOT IN ('pg_catalog', 'information_schema')
                     AND n.nspname NOT LIKE 'pg\\_toast%'
                     AND n.nspname NOT LIKE 'pg\\_temp%'
-                  ORDER BY 1, 2"),
+                  ORDER BY 1, 2",
                 &[],
             )
             .await?;
@@ -209,7 +209,7 @@ impl Pg {
         let rows = self
             .client
             .query(
-                internal!("SELECT n.nspname::text, c.relname::text,
+                "SELECT /* fabio */ n.nspname::text, c.relname::text,
                         array(SELECT a.attname::text FROM pg_attribute a
                                WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
                                ORDER BY a.attnum)
@@ -219,7 +219,7 @@ impl Pg {
                     AND n.nspname NOT IN ('pg_catalog', 'information_schema')
                     AND n.nspname NOT LIKE 'pg\\_toast%'
                     AND n.nspname NOT LIKE 'pg\\_temp%'
-                  ORDER BY 1, 2"),
+                  ORDER BY 1, 2",
                 &[],
             )
             .await?;
@@ -232,8 +232,8 @@ impl Pg {
     async fn oid(&self, relation: &RelationRef) -> Result<u32> {
         self.client
             .query_opt(
-                internal!("SELECT c.oid FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-                  WHERE n.nspname = $1 AND c.relname = $2"),
+                "SELECT /* fabio */ c.oid FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                  WHERE n.nspname = $1 AND c.relname = $2",
                 &[&relation.schema, &relation.name],
             )
             .await?
@@ -246,7 +246,7 @@ impl Pg {
         let by_oid: &[&(dyn ToSql + Sync)] = &[&oid];
         let (columns, indexes, foreign_keys) = tokio::try_join!(
             self.client.query(
-                internal!("SELECT a.attname::text,
+                "SELECT /* fabio */ a.attname::text,
                         format_type(a.atttypid, a.atttypmod),
                         format_type(a.atttypid, NULL),
                         NOT a.attnotnull,
@@ -256,20 +256,20 @@ impl Pg {
                    LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
                    LEFT JOIN pg_index i ON i.indrelid = a.attrelid AND i.indisprimary
                   WHERE a.attrelid = $1 AND a.attnum > 0 AND NOT a.attisdropped
-                  ORDER BY a.attnum"),
+                  ORDER BY a.attnum",
                 by_oid,
             ),
             self.client.query(
-                internal!("SELECT ic.relname::text, i.indisunique, i.indisprimary,
+                "SELECT /* fabio */ ic.relname::text, i.indisunique, i.indisprimary,
                         array(SELECT pg_get_indexdef(i.indexrelid, k, true)
                                 FROM generate_series(1, i.indnkeyatts) k ORDER BY k)
                    FROM pg_index i JOIN pg_class ic ON ic.oid = i.indexrelid
                   WHERE i.indrelid = $1
-                  ORDER BY i.indisprimary DESC, ic.relname"),
+                  ORDER BY i.indisprimary DESC, ic.relname",
                 by_oid,
             ),
             self.client.query(
-                internal!("SELECT con.conname::text,
+                "SELECT /* fabio */ con.conname::text,
                         array(SELECT a.attname::text FROM unnest(con.conkey) WITH ORDINALITY k(n, o)
                                 JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = k.n
                                ORDER BY k.o),
@@ -281,7 +281,7 @@ impl Pg {
                    JOIN pg_class rc ON rc.oid = con.confrelid
                    JOIN pg_namespace rn ON rn.oid = rc.relnamespace
                   WHERE con.conrelid = $1 AND con.contype = 'f'
-                  ORDER BY con.conname"),
+                  ORDER BY con.conname",
                 by_oid,
             ),
         )?;
@@ -328,7 +328,7 @@ impl Pg {
                 let estimate = if filters.is_empty() {
                     self.client
                         .query_one(
-                            internal!("SELECT CASE WHEN reltuples >= 0 THEN reltuples::int8 END FROM pg_class WHERE oid = $1"),
+                            "SELECT /* fabio */ CASE WHEN reltuples >= 0 THEN reltuples::int8 END FROM pg_class WHERE oid = $1",
                             &[&self.oid(relation).await?],
                         )
                         .await?

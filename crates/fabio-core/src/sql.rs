@@ -68,7 +68,7 @@ pub fn where_clause(dialect: &Dialect, columns: &[Column], filters: &[Filter]) -
 /// `SELECT count(*)` under the same filters as a page.
 pub fn count_statement(dialect: &Dialect, from: &str, columns: &[Column], filters: &[Filter]) -> Result<(String, Vec<String>)> {
     let (clause, params) = where_clause(dialect, columns, filters)?;
-    Ok((format!("/* fabio */ SELECT count(*) FROM {from}{clause}"), params))
+    Ok((format!("SELECT /* fabio */ count(*) FROM {from}{clause}"), params))
 }
 
 /// Builds `SELECT … LIMIT limit+1 OFFSET …` and its parameters. Fetching one
@@ -96,7 +96,7 @@ pub fn page_statement(
     }
 
     let select: Vec<_> = columns.iter().map(dialect.select).collect();
-    let mut sql = format!("/* fabio */ SELECT {} FROM {from}{clause}", select.join(", "));
+    let mut sql = format!("SELECT /* fabio */ {} FROM {from}{clause}", select.join(", "));
     if !order.is_empty() {
         sql += &format!(" ORDER BY {}", order.join(", "));
     }

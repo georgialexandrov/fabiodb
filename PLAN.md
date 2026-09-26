@@ -50,7 +50,7 @@ Mascot: Fabio the marmot — sits by the burrow, whistles when something is wron
 | Editor | CodeMirror 6 | Light, extensible, good SQL mode |
 | Autocomplete | `@codemirror/lang-sql` with the live schema (v1) → `postgres-language-server` sidecar (v2) | Ship simple first, swap in LSP when the simple one hurts |
 | Formatter | `sql-formatter` (v1) | Preserves comments; `pg_query` deparse drops them |
-| Plan viewer | PEV2 (Dalibo) | Best EXPLAIN visualiser that exists; embed, don't rebuild |
+| Plan viewer | Own React tree over a core-normalized `Plan` | PEV2 is Vue + Bootstrap: a second framework, heavy, and it can't follow VOICE.md. The core normalizes both engines and computes findings, so the agent reuses them. "Copy raw" hands the JSON to PEV2/explain.dalibo.com when needed |
 | Agent | MCP server binary sharing the core crate | Claude Code / pi drive it; no LLM vendor baked in |
 | Tests | `cargo test` against `dev/pg.sh` Postgres; Vitest; Playwright for smoke | Real database in every integration test; testcontainers once CI needs it |
 | Dev data | **Chinook** (artists/albums/tracks) — Postgres via `dev/pg.sh` (project-local cluster, port 54329) + the SQLite file | Same data in both engines = one fixture, two drivers, directly comparable tests |
@@ -130,7 +130,7 @@ current one's exit criteria hold.
 - Errors shown with position highlighted in the editor.
 - **Exit:** you'd write a real query here instead of in your old client.
 
-### Phase 3 — Performance (weekend 3) — the differentiator
+### Phase 3 — Performance (weekend 3) — the differentiator — ✅ built 2026-09-26, seen on screen: plan + finding on perf.big, Insights, SQLite plan. Left: side-by-side plan diff (only a before/after time line today)
 - "Explain" button → `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` in a rolled-back
   transaction → PEV2 view. Plain `EXPLAIN` for writes.
 - Plan diff: run twice (e.g. before/after an index) and compare.

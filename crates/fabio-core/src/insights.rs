@@ -59,7 +59,7 @@ pub struct Insights {
 pub async fn postgres(client: &Client) -> Result<Insights> {
     let activity = client
         .query(
-            internal!("SELECT pid, usename::text, application_name, state,
+            "SELECT /* fabio */ pid, usename::text, application_name, state,
                     wait_event_type || ':' || wait_event,
                     (extract(epoch FROM now() - query_start) * 1000)::float8,
                     query, pg_blocking_pids(pid)
@@ -67,7 +67,7 @@ pub async fn postgres(client: &Client) -> Result<Insights> {
               WHERE datname = current_database() AND pid <> pg_backend_pid()
                 AND backend_type = 'client backend'
                 AND NOT (application_name = 'fabio' AND state = 'idle')
-              ORDER BY state = 'active' DESC, query_start"),
+              ORDER BY state = 'active' DESC, query_start",
             &[],
         )
         .await?
@@ -85,19 +85,19 @@ pub async fn postgres(client: &Client) -> Result<Insights> {
         .collect();
 
     let installed = client
-        .query_opt(internal!("SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements'"), &[])
+        .query_opt("SELECT /* fabio */ 1 FROM pg_extension WHERE extname = 'pg_stat_statements'", &[])
         .await?
         .is_some();
     let top_statements = if installed {
         // The view errors if the library isn't preloaded; treat that as "not available".
         client
             .query(
-                internal!("SELECT s.query, s.calls, s.total_exec_time, s.mean_exec_time, s.rows
+                "SELECT /* fabio */ s.query, s.calls, s.total_exec_time, s.mean_exec_time, s.rows
                    FROM pg_stat_statements s JOIN pg_database d ON d.oid = s.dbid
                   WHERE d.datname = current_database()
-                    AND s.query NOT LIKE '/* fabio */%'
-                    AND s.query !~* '^\\s*explain\\s'
-                  ORDER BY s.total_exec_time DESC LIMIT 50"),
+                    AND s.query NOT LIKE '%/* fabio */%'
+                    AND s.query !~* '^\\s*(explain\\s|begin$|rollback$)'
+                  ORDER BY s.total_exec_time DESC LIMIT 50",
                 &[],
             )
             .await
@@ -119,11 +119,11 @@ pub async fn postgres(client: &Client) -> Result<Insights> {
 
     let unused_indexes = client
         .query(
-            internal!("SELECT s.schemaname::text, s.relname::text, s.indexrelname::text, s.idx_scan,
+            "SELECT /* fabio */ s.schemaname::text, s.relname::text, s.indexrelname::text, s.idx_scan,
                     pg_relation_size(s.indexrelid)
                FROM pg_stat_user_indexes s JOIN pg_index i ON i.indexrelid = s.indexrelid
               WHERE s.idx_scan = 0 AND NOT i.indisunique AND NOT i.indisprimary
-              ORDER BY pg_relation_size(s.indexrelid) DESC LIMIT 50"),
+              ORDER BY pg_relation_size(s.indexrelid) DESC LIMIT 50",
             &[],
         )
         .await?
@@ -133,9 +133,9 @@ pub async fn postgres(client: &Client) -> Result<Insights> {
 
     let seq_scan_tables = client
         .query(
-            internal!("SELECT schemaname::text, relname::text, seq_scan, seq_tup_read, idx_scan, n_live_tup
+            "SELECT /* fabio */ schemaname::text, relname::text, seq_scan, seq_tup_read, idx_scan, n_live_tup
                FROM pg_stat_user_tables WHERE seq_tup_read > 0
-              ORDER BY seq_tup_read DESC LIMIT 20"),
+              ORDER BY seq_tup_read DESC LIMIT 20",
             &[],
         )
         .await?

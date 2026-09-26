@@ -134,16 +134,6 @@ async fn insights_show_other_sessions_that_are_running() {
 }
 
 #[tokio::test]
-async fn insights_list_top_statements_from_pg_stat_statements() {
-    let db = postgres().await;
-    db.query("select count(*) from invoice_line").await.unwrap();
-
-    let top = db.insights().await.unwrap().top_statements.expect("pg_stat_statements is installed in dev");
-    assert!(!top.is_empty());
-    assert!(top.windows(2).all(|w| w[0].total_ms >= w[1].total_ms));
-}
-
-#[tokio::test]
 async fn unused_indexes_exclude_primary_and_unique() {
     let insights = postgres().await.insights().await.unwrap();
     assert!(insights.unused_indexes.iter().all(|i| i.scans == 0 && !i.name.ends_with("_pkey")));
@@ -170,14 +160,20 @@ fn find(n: &fabio_core::PlanNode, pred: impl Fn(&fabio_core::PlanNode) -> bool +
 }
 
 #[tokio::test]
-async fn insights_leave_out_fabios_own_statements() {
+async fn top_statements_are_the_users_not_fabios() {
+    // One test, in order: the reset would race with a separate one (dev only).
     let db = postgres().await;
+    db.query("select pg_stat_statements_reset()").await.unwrap();
     db.relations().await.unwrap();
     db.explain("select * from artist", true).await.unwrap();
+    db.query("select count(*) from invoice_line").await.unwrap();
 
     let insights = db.insights().await.unwrap();
-    let top = insights.top_statements.unwrap();
-    assert!(top.iter().all(|s| !s.query.starts_with("/* fabio */")), "internal statement listed");
+    let top = insights.top_statements.expect("pg_stat_statements is installed in dev");
+    assert!(top.iter().any(|s| s.query.contains("invoice_line")), "the user's statement is listed");
+    assert!(top.windows(2).all(|w| w[0].total_ms >= w[1].total_ms));
+    let internal = top.iter().find(|s| s.query.contains("pg_namespace n ON n.oid = c.relnamespace"));
+    assert!(internal.is_none(), "internal statement listed: {:?}", internal.map(|s| &s.query));
     assert!(top.iter().all(|s| !s.query.to_lowercase().starts_with("explain")), "EXPLAIN wrapper listed");
     assert!(insights.activity.iter().all(|a| !(a.application.as_deref() == Some("fabio") && a.state.as_deref() == Some("idle"))));
 }

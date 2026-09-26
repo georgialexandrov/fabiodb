@@ -5,9 +5,10 @@ type Props = {
   plan: Plan;
   /** The previous plan of the same statement, for a before/after line. */
   previous: Plan | null;
+  engine: "postgres" | "sqlite";
 };
 
-export function PlanView({ plan, previous }: Props) {
+export function PlanView({ plan, previous, engine }: Props) {
   const [focus, setFocus] = useState<string | null>(plan.findings[0] ? key(plan.findings[0].path) : null);
   const flagged = new Map(plan.findings.map((f) => [key(f.path), f.severity]));
   const scale = plan.execution_ms ?? plan.root.total_ms ?? 0;
@@ -21,7 +22,11 @@ export function PlanView({ plan, previous }: Props) {
             {plan.planning_ms != null && <span className="muted"> · planned in {ms(plan.planning_ms)}</span>}
           </span>
         ) : (
-          <span className="muted">Estimate only — the statement didn't run. ⌘E runs it (rolled back).</span>
+          <span className="muted">
+            {engine === "sqlite"
+              ? "SQLite shows the steps it will take, not their timings. Steps in red read the whole table."
+              : "Estimate only — the statement didn't run. ⌘E runs it (rolled back)."}
+          </span>
         )}
         {previous?.execution_ms != null && plan.execution_ms != null && (
           <span className="compare">
