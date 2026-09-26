@@ -18,6 +18,9 @@ pub struct SavedConnection {
     /// Agents (through the MCP server) may query this connection, read-only.
     #[serde(default)]
     pub agent: bool,
+    /// Optional folder in the connection switcher ("Work", "Side projects").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
 }
 
 pub struct Store {
@@ -73,6 +76,7 @@ impl Store {
                 name: path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned()),
                 target: Target::Sqlite { path: path.to_owned() },
                 agent: false,
+                group: None,
             }),
         }
     }

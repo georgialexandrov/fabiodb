@@ -16,7 +16,14 @@ export type PgTarget = {
 export type Target = ({ engine: "postgres" } & PgTarget) | { engine: "sqlite"; path: string };
 
 /** `agent`: agents may query it read-only through the MCP server. */
-export type SavedConnection = { id: string; name: string; target: Target; agent: boolean };
+export type SavedConnection = {
+  id: string;
+  name: string;
+  target: Target;
+  agent: boolean;
+  /** Folder in the connection switcher. */
+  group?: string | null;
+};
 
 export type RelationKind = "table" | "view" | "materialized_view";
 

@@ -11,12 +11,14 @@ const NEW_POSTGRES: SavedConnection = {
 
 type Props = {
   initial: SavedConnection | null;
+  /** Groups already in use, suggested in the Group field. */
+  groups: string[];
   onSaved: (c: SavedConnection) => void;
   onDeleted: (id: string) => void;
   onClose: () => void;
 };
 
-export function ConnectionForm({ initial, onSaved, onDeleted, onClose }: Props) {
+export function ConnectionForm({ initial, groups, onSaved, onDeleted, onClose }: Props) {
   const [conn, setConn] = useState<SavedConnection>(initial ?? NEW_POSTGRES);
   // null = leave the saved password alone
   const [password, setPassword] = useState<string | null>(null);
@@ -87,10 +89,26 @@ export function ConnectionForm({ initial, onSaved, onDeleted, onClose }: Props) 
       >
         <h2>{initial?.id ? "Edit connection" : "New connection"}</h2>
 
-        <label>
-          Name
-          <input autoFocus value={conn.name} onChange={(e) => setConn({ ...conn, name: e.target.value })} placeholder="optional" />
-        </label>
+        <div className="row">
+          <label className="grow">
+            Name
+            <input autoFocus value={conn.name} onChange={(e) => setConn({ ...conn, name: e.target.value })} placeholder="optional" />
+          </label>
+          <label className="grow">
+            Group
+            <input
+              list="connection-groups"
+              value={conn.group ?? ""}
+              onChange={(e) => setConn({ ...conn, group: e.target.value || null })}
+              placeholder="optional"
+            />
+            <datalist id="connection-groups">
+              {groups.map((g) => (
+                <option key={g} value={g} />
+              ))}
+            </datalist>
+          </label>
+        </div>
 
         {t.engine === "postgres" ? (
           <>

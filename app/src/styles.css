@@ -96,8 +96,7 @@ select:focus, input:focus, textarea:focus { border-color: var(--accent); }
 .sidebar-head { display: flex; align-items: center; gap: 2px; padding: 38px 8px 6px 14px; }
 .brand { font-weight: 650; color: var(--accent); letter-spacing: 0.2px; }
 
-.connections { padding: 0 6px 8px; border-bottom: 1px solid var(--line); }
-.connection, .relation {
+.relation {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -105,10 +104,8 @@ select:focus, input:focus, textarea:focus { border-color: var(--accent); }
   border-radius: 6px;
   height: 26px;
 }
-.connection:hover, .relation:hover { background: var(--hover); }
-.connection.active, .relation.active { background: var(--accent-soft); }
-.connection .edit { visibility: hidden; padding: 0 6px; }
-.connection:hover .edit { visibility: visible; }
+.relation:hover { background: var(--hover); }
+.relation.active { background: var(--accent-soft); }
 .engine { font-size: 9px; font-weight: 700; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 3px; }
 
 .relations { flex: 1; overflow: auto; padding: 8px 6px; }
@@ -358,3 +355,25 @@ button:disabled { opacity: 0.4; }
 .row-field-edit textarea { flex: 1; min-width: 0; resize: vertical; font-family: var(--mono); font-size: 12px; padding: 3px 6px; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 4px; }
 .row-field-edit textarea:focus { border-color: var(--accent); outline: none; }
 .set-null-field { font-size: 10px; padding: 2px 4px; }
+
+/* Connection switcher */
+.current-connection-wrap { position: relative; padding: 0 8px 8px; border-bottom: 1px solid var(--line); }
+.current-connection { width: 100%; display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); text-align: left; color: var(--text); }
+.current-connection:hover { background: var(--hover); }
+.switcher-text { display: flex; flex-direction: column; min-width: 0; flex: 1; line-height: 1.3; }
+.switcher-sub { font-size: 11px; font-family: var(--mono); }
+.switcher { display: flex; flex-direction: column; background: var(--surface); }
+.switcher.popover { position: absolute; left: 8px; top: calc(100% - 4px); z-index: 30; width: 380px; max-height: 70vh; border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 12px 36px #0004; overflow: hidden; }
+.switcher.page { width: 520px; max-width: calc(100% - 32px); max-height: 80%; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.switcher input { border: 0; border-bottom: 1px solid var(--line); border-radius: 0; padding: 12px 14px; font-size: 14px; background: transparent; color: var(--text); outline: none; }
+.switcher-list { flex: 1; overflow: auto; padding: 4px; }
+.switcher-section { padding: 8px 10px 2px; font-size: 11px; font-weight: 600; letter-spacing: 0.4px; text-transform: uppercase; color: var(--muted); }
+.switcher-item { display: flex; align-items: center; gap: 8px; padding: 5px 10px; border-radius: 6px; }
+.switcher-item.active { background: var(--hover); }
+.switcher-item.current .switcher-text > span:first-child { color: var(--accent); }
+.switcher-item .edit { opacity: 0; }
+.switcher-item.active .edit { opacity: 1; }
+.switcher-actions { display: flex; gap: 4px; padding: 6px; border-top: 1px solid var(--line); flex-wrap: wrap; }
+.switcher-actions kbd { font: 10px var(--mono); color: var(--muted); margin-left: 4px; }
+.switcher .hint { padding: 8px 10px; margin: 0; }
+.start { flex: 1; display: grid; place-items: center; padding: 32px 0; min-height: 0; }

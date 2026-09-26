@@ -38,7 +38,9 @@ impl Server {
             ("lite", true, Target::Sqlite { path: sqlite.clone() }),
             ("private", false, Target::Sqlite { path: sqlite }),
         ] {
-            store.save(SavedConnection { id: id.into(), name: format!("{id} chinook"), target, agent }).unwrap();
+            store
+                .save(SavedConnection { id: id.into(), name: format!("{id} chinook"), target, agent, group: None })
+                .unwrap();
         }
 
         let mut child = Command::new(env!("CARGO_BIN_EXE_fabio-mcp"))

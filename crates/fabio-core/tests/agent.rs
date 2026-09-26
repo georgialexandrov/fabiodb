@@ -216,6 +216,7 @@ fn agent_with(connections: &[(&str, bool, Target)]) -> (Agent, Arc<AuditLog>) {
                 name: name.to_string(),
                 target: target.clone(),
                 agent: *agent,
+                group: None,
             })
             .unwrap();
     }

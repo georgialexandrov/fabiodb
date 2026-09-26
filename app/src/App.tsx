@@ -4,6 +4,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { AgentView, explainMode, formatMs } from "./AgentView";
 import { CommandPalette, type Command } from "./CommandPalette";
 import { ConnectionForm } from "./ConnectionForm";
+import { ConnectionSwitcher, describe, markUsed } from "./ConnectionSwitcher";
 import { InsightsView } from "./InsightsView";
 import { QueryTab } from "./QueryTab";
 import { TableView } from "./TableView";
@@ -50,6 +51,7 @@ export default function App() {
   const lastAgentId = useRef(0);
   const [theme, setTheme] = useState<Theme>(savedTheme);
   const [palette, setPalette] = useState(false);
+  const [switcher, setSwitcher] = useState(false);
   const [snippets, setSnippets] = useState<Snippet[]>([]);
 
   // Snippets are saved from query tabs; read them fresh whenever ⌘K opens.
@@ -84,6 +86,8 @@ export default function App() {
 
   async function activate(connection: SavedConnection) {
     setError(null);
+    setSwitcher(false);
+    markUsed(connection.id);
     if (relations[connection.id]) {
       setActiveId(connection.id);
       return;
@@ -195,6 +199,7 @@ export default function App() {
       else if (key === "t") newQuery();
       else if (key === "w" && current) closeTab(current);
       else if (key === "l" && e.shiftKey) setTheme(nextTheme);
+      else if (key === "k" && e.shiftKey) setSwitcher((s) => !s);
       else if (key === "k") setPalette((p) => !p);
       else return;
       e.preventDefault();
@@ -291,30 +296,39 @@ export default function App() {
           </button>
         </div>
 
-        <nav className="connections">
-          {connections.length === 0 && <p className="hint">Add a Postgres connection, or drop a SQLite file anywhere.</p>}
-          {connections.map((c) => (
-            <div
-              key={c.id}
-              className={`connection ${c.id === activeId ? "active" : ""}`}
-              onClick={() => activate(c)}
-              title={c.target.engine === "sqlite" ? c.target.path : `${c.target.user}@${c.target.host}:${c.target.port}/${c.target.database}`}
-            >
-              <span className={`engine ${c.target.engine}`}>{c.target.engine === "postgres" ? "PG" : "SQ"}</span>
-              <span className="grow ellipsis">{connecting === c.id ? "Connecting…" : c.name}</span>
-              {relations[c.id] && <span className="dot" title="Connected" />}
-              <button
-                className="ghost edit"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setEditing(c);
-                }}
-              >
-                ⋯
-              </button>
-            </div>
-          ))}
-        </nav>
+        <div className="current-connection-wrap">
+          {connections.length === 0 ? (
+            <p className="hint">Add a Postgres connection, or drop a SQLite file anywhere.</p>
+          ) : (
+            <button className="current-connection" onClick={() => setSwitcher((v) => !v)} title="Switch connection (⇧⌘K)">
+              {active ? (
+                <>
+                  <span className={`engine ${active.target.engine}`}>{active.target.engine === "postgres" ? "PG" : "SQ"}</span>
+                  <span className="switcher-text">
+                    <span className="ellipsis">{connecting ? "Connecting…" : active.name}</span>
+                    <span className="muted ellipsis switcher-sub">{describe(active)}</span>
+                  </span>
+                </>
+              ) : (
+                <span className="grow muted">{connecting ? "Connecting…" : "Choose a connection"}</span>
+              )}
+              <span className="muted">▾</span>
+            </button>
+          )}
+          {switcher && (
+            <ConnectionSwitcher
+              mode="popover"
+              connections={connections}
+              openIds={new Set(Object.keys(relations))}
+              activeId={activeId}
+              onPick={activate}
+              onEdit={(c) => (setSwitcher(false), setEditing(c))}
+              onNew={() => (setSwitcher(false), setEditing(null))}
+              onOpenSqlite={() => (setSwitcher(false), chooseSqlite().catch((e) => setError(String(e))))}
+              onClose={() => setSwitcher(false)}
+            />
+          )}
+        </div>
 
         {active && (
           <div className="relations">
@@ -439,10 +453,25 @@ export default function App() {
           );
         })}
 
-        {(!active || !currentTab) && (
+        {!active && connections.length > 0 && (
+          <div className="start">
+            <ConnectionSwitcher
+              mode="page"
+              connections={connections}
+              openIds={new Set(Object.keys(relations))}
+              activeId={activeId}
+              onPick={activate}
+              onEdit={setEditing}
+              onNew={() => setEditing(null)}
+              onOpenSqlite={() => chooseSqlite().catch((e) => setError(String(e)))}
+            />
+          </div>
+        )}
+
+        {((!active && connections.length === 0) || (active && !currentTab)) && (
           <div className="empty">
             <img className="marmot" src="/fabio.png" alt="Fabio the marmot" width={96} height={96} />
-            <p className="muted">{active ? "Pick a table, or ⌘T for a new query." : "Pick a connection, or drop a SQLite file here."}</p>
+            <p className="muted">{active ? "Pick a table, or ⌘T for a new query." : "Add a Postgres connection (⌘N), or drop a SQLite file here."}</p>
           </div>
         )}
       </main>
@@ -452,6 +481,7 @@ export default function App() {
       {editing !== undefined && (
         <ConnectionForm
           initial={editing}
+          groups={[...new Set(connections.flatMap((c) => (c.group ? [c.group] : [])))].sort()}
           onClose={() => setEditing(undefined)}
           onSaved={async (c) => {
             setEditing(undefined);

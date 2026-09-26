@@ -21,6 +21,7 @@ fn pg(password: Option<&str>) -> SavedConnection {
             ca_cert: None,
         }),
         agent: false,
+        group: None,
     }
 }
 
@@ -79,4 +80,5 @@ fn older_files_without_the_agent_flag_still_load() {
     std::fs::write(&path, r#"[{"id":"a","name":"x","target":{"engine":"sqlite","path":"/tmp/x.db"}}]"#).unwrap();
 
     assert!(!store.list().unwrap()[0].agent);
+    assert_eq!(store.list().unwrap()[0].group, None);
 }
