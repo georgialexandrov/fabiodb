@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::{Duration, Instant};
 
@@ -22,6 +23,12 @@ pub enum SslMode {
     Prefer,
     /// Require TLS. Like libpq, the certificate is not verified.
     Require,
+    /// Require TLS and a certificate signed by a trusted CA (the system's, or `ca_cert`).
+    #[serde(rename = "verify-ca")]
+    VerifyCa,
+    /// As `VerifyCa`, and the certificate must name the host connected to.
+    #[serde(rename = "verify-full")]
+    VerifyFull,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -33,11 +40,17 @@ pub struct PgTarget {
     pub database: String,
     #[serde(default)]
     pub ssl: SslMode,
+    /// PEM file of the CA that signed the server's certificate, for the verify
+    /// modes when it isn't a CA the system already trusts (libpq's sslrootcert).
+    #[serde(default)]
+    pub ca_cert: Option<PathBuf>,
 }
 
 impl PgTarget {
     pub fn from_url(url: &str) -> Result<PgTarget> {
-        let config = tokio_postgres::Config::from_str(url)?;
+        // tokio-postgres knows neither verify mode nor sslrootcert; take them out first.
+        let (url, verify, ca_cert) = split_tls_params(url);
+        let config = tokio_postgres::Config::from_str(&url)?;
         let host = match config.get_hosts().first() {
             Some(tokio_postgres::config::Host::Tcp(h)) => h.clone(),
             #[cfg(unix)]
@@ -51,13 +64,71 @@ impl PgTarget {
             database: config.get_dbname().map_or_else(|| user.clone(), str::to_owned),
             user,
             password: config.get_password().map(|p| String::from_utf8_lossy(p).into_owned()),
-            ssl: match config.get_ssl_mode() {
+            ssl: verify.unwrap_or(match config.get_ssl_mode() {
                 tokio_postgres::config::SslMode::Disable => SslMode::Disable,
                 tokio_postgres::config::SslMode::Require => SslMode::Require,
                 _ => SslMode::Prefer,
-            },
+            }),
+            ca_cert,
         })
     }
+}
+
+/// The URL without `sslmode=verify-*` and `sslrootcert=…`, and what they said.
+fn split_tls_params(url: &str) -> (String, Option<SslMode>, Option<PathBuf>) {
+    let Some((base, query)) = url.split_once('?') else { return (url.to_owned(), None, None) };
+    let (mut verify, mut ca_cert, mut kept) = (None, None, Vec::new());
+    for pair in query.split('&') {
+        match pair.split_once('=') {
+            Some(("sslmode", "verify-ca")) => verify = Some(SslMode::VerifyCa),
+            Some(("sslmode", "verify-full")) => verify = Some(SslMode::VerifyFull),
+            Some(("sslrootcert", path)) => ca_cert = Some(PathBuf::from(percent_decode(path))),
+            _ => kept.push(pair),
+        }
+    }
+    let url = if kept.is_empty() { base.to_owned() } else { format!("{base}?{}", kept.join("&")) };
+    (url, verify, ca_cert)
+}
+
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%'
+            && let Some(b) = s.get(i + 1..i + 3).and_then(|h| u8::from_str_radix(h, 16).ok())
+        {
+            out.push(b);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// libpq's semantics: prefer/require encrypt without checking; the verify
+/// modes check the chain (and, for verify-full, the host name).
+fn tls_connector(target: &PgTarget) -> Result<postgres_native_tls::MakeTlsConnector> {
+    let mut builder = native_tls::TlsConnector::builder();
+    match target.ssl {
+        SslMode::Disable | SslMode::Prefer | SslMode::Require => {
+            builder.danger_accept_invalid_certs(true);
+        }
+        SslMode::VerifyCa | SslMode::VerifyFull => {
+            if let Some(path) = &target.ca_cert {
+                let pem = std::fs::read(path).map_err(|e| Error::Invalid(format!("{}: {e}", path.display())))?;
+                let cert = native_tls::Certificate::from_pem(&pem)
+                    .map_err(|e| Error::Invalid(format!("{}: not a PEM certificate: {e}", path.display())))?;
+                builder.add_root_certificate(cert);
+            }
+            if target.ssl == SslMode::VerifyCa {
+                builder.danger_accept_invalid_hostnames(true);
+            }
+        }
+    }
+    Ok(postgres_native_tls::MakeTlsConnector::new(builder.build()?))
 }
 
 pub struct Pg {
@@ -79,13 +150,12 @@ impl Pg {
             .ssl_mode(match target.ssl {
                 SslMode::Disable => tokio_postgres::config::SslMode::Disable,
                 SslMode::Prefer => tokio_postgres::config::SslMode::Prefer,
-                SslMode::Require => tokio_postgres::config::SslMode::Require,
+                SslMode::Require | SslMode::VerifyCa | SslMode::VerifyFull => tokio_postgres::config::SslMode::Require,
             });
         if let Some(password) = &target.password {
             config.password(password);
         }
-        let tls = native_tls::TlsConnector::builder().danger_accept_invalid_certs(true).build()?;
-        let tls = postgres_native_tls::MakeTlsConnector::new(tls);
+        let tls = tls_connector(target)?;
         let (client, connection) = config.connect(tls.clone()).await?;
         tokio::spawn(connection);
 

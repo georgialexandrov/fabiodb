@@ -38,6 +38,30 @@ SQL
   echo "postgres://$PGUSER@$PGHOST:$PGPORT/chinook"
 }
 
+# TLS with a private CA, so verify-full can be tested: dev/.pgdata/ssl/ca.crt
+# signs a certificate for "localhost" only (not 127.0.0.1). Plain connections
+# keep working; the server offers TLS, it doesn't require it.
+ssl() {
+  local dir="$PGDATA/ssl"
+  if [ ! -f "$dir/server.crt" ]; then
+    mkdir -p "$dir"
+    openssl req -x509 -new -nodes -newkey rsa:2048 -days 800 -subj "/CN=Fabio dev CA" \
+      -addext "basicConstraints=critical,CA:TRUE" -addext "keyUsage=critical,keyCertSign,cRLSign" \
+      -keyout "$dir/ca.key" -out "$dir/ca.crt" 2>/dev/null
+    openssl req -new -nodes -newkey rsa:2048 -subj "/CN=localhost" \
+      -keyout "$dir/server.key" -out "$dir/server.csr" 2>/dev/null
+    printf 'subjectAltName=DNS:localhost\nextendedKeyUsage=serverAuth\nkeyUsage=critical,digitalSignature,keyEncipherment\nbasicConstraints=CA:FALSE\n' > "$dir/server.ext"
+    openssl x509 -req -in "$dir/server.csr" -CA "$dir/ca.crt" -CAkey "$dir/ca.key" -CAcreateserial \
+      -days 800 -extfile "$dir/server.ext" -out "$dir/server.crt" 2>/dev/null
+    chmod 600 "$dir/server.key"
+  fi
+  if ! grep -q "^ssl = on" "$PGDATA/postgresql.conf"; then
+    printf "ssl = on\nssl_cert_file = '%s'\nssl_key_file = '%s'\n" "$dir/server.crt" "$dir/server.key" >> "$PGDATA/postgresql.conf"
+    "$1/pg_ctl" -D "$PGDATA" reload >/dev/null
+    sleep 1
+  fi
+}
+
 case "${1:-start}" in
   start)
     BIN="$(brew_bin)"
@@ -47,6 +71,7 @@ case "${1:-start}" in
     fi
     "$BIN/pg_ctl" -D "$PGDATA" -o "-p $PORT -k /tmp" -l "$PGDATA/server.log" -w status >/dev/null 2>&1 \
       || "$BIN/pg_ctl" -D "$PGDATA" -o "-p $PORT -k /tmp" -l "$PGDATA/server.log" -w start >/dev/null
+    ssl "$BIN"
     load "$BIN"
     ;;
   load)  load "" ;;

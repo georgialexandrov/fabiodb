@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export type SslMode = "disable" | "prefer" | "require";
+export type SslMode = "disable" | "prefer" | "require" | "verify-ca" | "verify-full";
 
 export type PgTarget = {
   host: string;
@@ -9,6 +9,8 @@ export type PgTarget = {
   password: string | null;
   database: string;
   ssl: SslMode;
+  /** PEM of the CA for the verify modes, when the system doesn't already trust it. */
+  ca_cert: string | null;
 };
 
 export type Target = ({ engine: "postgres" } & PgTarget) | { engine: "sqlite"; path: string };

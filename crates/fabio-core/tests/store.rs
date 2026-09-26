@@ -18,6 +18,7 @@ fn pg(password: Option<&str>) -> SavedConnection {
             password: password.map(Into::into),
             database: "app".into(),
             ssl: SslMode::Prefer,
+            ca_cert: None,
         }),
         agent: false,
     }

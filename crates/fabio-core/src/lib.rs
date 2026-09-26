@@ -368,7 +368,20 @@ impl From<tokio_postgres::Error> for Error {
                     _ => None,
                 },
             },
-            None => Error::Postgres { message: err.to_string(), position: None },
+            // Connection and TLS errors keep their reason in the source chain
+            // ("error performing TLS handshake: The certificate was not trusted").
+            None => {
+                let mut message = err.to_string();
+                let mut source = std::error::Error::source(&err);
+                while let Some(cause) = source {
+                    let text = cause.to_string();
+                    if !message.contains(&text) {
+                        message = format!("{message}: {text}");
+                    }
+                    source = cause.source();
+                }
+                Error::Postgres { message, position: None }
+            }
         }
     }
 }

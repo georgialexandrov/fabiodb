@@ -5,7 +5,7 @@ import { api, type SavedConnection, type SslMode, type Target } from "./api";
 const NEW_POSTGRES: SavedConnection = {
   id: "",
   name: "",
-  target: { engine: "postgres", host: "localhost", port: 5432, user: "postgres", password: null, database: "postgres", ssl: "prefer" },
+  target: { engine: "postgres", host: "localhost", port: 5432, user: "postgres", password: null, database: "postgres", ssl: "prefer", ca_cert: null },
   agent: false,
 };
 
@@ -145,9 +145,34 @@ export function ConnectionForm({ initial, onSaved, onDeleted, onClose }: Props) 
                   <option value="disable">disable</option>
                   <option value="prefer">prefer</option>
                   <option value="require">require</option>
+                  <option value="verify-ca">verify-ca</option>
+                  <option value="verify-full">verify-full</option>
                 </select>
               </label>
             </div>
+            {t.ssl.startsWith("verify") && (
+              <div className="row">
+                <label className="grow">
+                  CA certificate
+                  <input
+                    spellCheck={false}
+                    value={t.ca_cert ?? ""}
+                    placeholder="the system’s trusted CAs"
+                    onChange={(e) => setTarget({ ca_cert: e.target.value || null })}
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="align-end"
+                  onClick={async () => {
+                    const path = await open({ multiple: false, directory: false });
+                    if (typeof path === "string") setTarget({ ca_cert: path });
+                  }}
+                >
+                  Choose…
+                </button>
+              </div>
+            )}
           </>
         ) : (
           <div className="row">
