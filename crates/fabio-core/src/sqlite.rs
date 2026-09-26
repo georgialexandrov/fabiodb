@@ -4,10 +4,11 @@ use std::time::{Duration, Instant};
 
 use rusqlite::{Connection, InterruptHandle, OpenFlags, params_from_iter, types::ValueRef};
 
+use crate::export::{self, ExportFormat, RowWriter};
 use crate::sql::{self, Dialect, quote};
 use crate::{
     Canceller, Column, CompletionTable, Count, Error, Filter, ForeignKey, Index, Page, PageRequest, QueryResult,
-    Relation, RelationKind, RelationRef, Result, ResultColumn, Rows, TableInfo,
+    Relation, RelationKind, RelationRef, Result, ResultColumn, Rows, Sort, TableInfo,
 };
 
 /// SQLite calls are blocking, so every call hops to the blocking pool.
@@ -187,6 +188,37 @@ impl Lite {
                 Ok(Count { rows: None, exact: false })
             }
         }
+    }
+
+    pub async fn export_table(
+        &self,
+        relation: &RelationRef,
+        sort: Option<&Sort>,
+        filters: &[Filter],
+        format: ExportFormat,
+        path: &std::path::Path,
+    ) -> Result<u64> {
+        let (relation, sort, filters, path) = (relation.clone(), sort.cloned(), filters.to_vec(), path.to_owned());
+        self.with(move |conn| {
+            let info = describe(conn, &relation)?;
+            let from = format!("{}.{}", quote(&relation.schema), quote(&relation.name));
+            let (sql, params) = sql::select_statement(&DIALECT, &from, &info.columns, sort.as_ref(), &filters)?;
+            let columns = crate::postgres::result_columns(&info);
+            let out = export::create(&path)?;
+            let written = (|| {
+                let mut writer = RowWriter::new(format, &columns, Some(&relation), out)?;
+                let mut statement = conn.prepare(&sql)?;
+                let mut rows = statement.query(params_from_iter(params))?;
+                while let Some(row) = rows.next()? {
+                    let values =
+                        (0..columns.len()).map(|i| row.get_ref(i).map(text)).collect::<rusqlite::Result<Vec<_>>>()?;
+                    writer.row(&values)?;
+                }
+                Ok(writer.finish()?.1)
+            })();
+            export::remove_on_error(&path, written)
+        })
+        .await
     }
 
     pub async fn page(&self, request: &PageRequest) -> Result<Page> {

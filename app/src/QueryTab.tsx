@@ -1,6 +1,17 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { chooseFile, ExportMenu } from "./ExportMenu";
 import { Grid } from "./Grid";
-import { api, type AuditEntry, type CompletionTable, type Plan, type QueryError, type QueryResult } from "./api";
+import {
+  api,
+  fileName,
+  plural,
+  type AuditEntry,
+  type CompletionTable,
+  type ExportFormat,
+  type Plan,
+  type QueryError,
+  type QueryResult,
+} from "./api";
 import { PlanView } from "./PlanView";
 import { splitStatements, statementAt, type Statement } from "./statements";
 import type { EditorSnapshot } from "./SqlEditor";
@@ -31,6 +42,7 @@ export function QueryTab({ connectionId, engine, schema, sql, onSqlChange, visib
   const [plan, setPlan] = useState<{ sql: string; plan: Plan; previous: Plan | null } | null>(null);
   const [view, setView] = useState<"results" | "plan">("results");
   const [history, setHistory] = useState<AuditEntry[]>([]);
+  const [notice, setNotice] = useState<string | null>(null);
   const cancelled = useRef(false);
 
   // Each query tab has its own connection: its own session, transaction and write mode.
@@ -106,6 +118,7 @@ export function QueryTab({ connectionId, engine, schema, sql, onSqlChange, visib
 
     setRunning(true);
     setFailure(null);
+    setNotice(null);
     cancelled.current = false;
     let total = 0;
     let current = statements[0];
@@ -139,6 +152,21 @@ export function QueryTab({ connectionId, engine, schema, sql, onSqlChange, visib
     } catch (e) {
       setFailure({ message: `Can't format: ${e instanceof Error ? e.message.split("\n")[0] : e}` });
     }
+  }
+
+  // Query results have no column types, so values export as text.
+  const resultColumns = () => result!.columns.map((name) => ({ name, data_type: "" }));
+
+  async function saveResult(format: ExportFormat) {
+    const path = await chooseFile("result", format);
+    if (!path) return null;
+    await api.exportRows(resultColumns(), result!.rows, format, null, path);
+    return `Saved ${plural(result!.rows.length, "row")} to ${fileName(path)}`;
+  }
+
+  async function copyResult(format: ExportFormat, label: string) {
+    await navigator.clipboard.writeText(await api.copyRows(resultColumns(), result!.rows, format, null));
+    return `Copied ${plural(result!.rows.length, "row")} as ${label}`;
   }
 
   async function cancel() {
@@ -190,6 +218,23 @@ export function QueryTab({ connectionId, engine, schema, sql, onSqlChange, visib
         )}
         <span className="grow" />
         {writable && <span className="write-note">Write mode — statements can change data.</span>}
+        {result && result.columns.length > 0 && view === "results" && (
+          <ExportMenu
+            onDone={setNotice}
+            note={
+              result.truncated
+                ? `The ${result.rows.length.toLocaleString()} rows shown; the result was capped.`
+                : `The ${plural(result.rows.length, "row")} shown.`
+            }
+            items={[
+              { label: "CSV…", run: () => saveResult("csv") },
+              { label: "JSON…", run: () => saveResult("json") },
+              "separator",
+              { label: "Copy as Markdown", run: () => copyResult("markdown", "Markdown") },
+              { label: "Copy as CSV", run: () => copyResult("csv", "CSV") },
+            ]}
+          />
+        )}
         <button className={writable ? "danger on" : "ghost"} onClick={toggleWrite} disabled={!session} title="Toggle write mode for this tab">
           {writable ? "Write" : "Read-only"}
         </button>
@@ -272,7 +317,9 @@ export function QueryTab({ connectionId, engine, schema, sql, onSqlChange, visib
             ? "Running… Esc to cancel"
             : failure
               ? "Failed"
-              : ran
+              : notice
+                ? notice
+                : ran
                 ? `${ran.count > 1 ? `${ran.count} statements · ` : ""}${result?.rows.length.toLocaleString() ?? 0} rows · ${ran.ms.toFixed(1)} ms`
                 : "⌘↵ run statement · ⇧⌘↵ run all · ⌘E explain · ⌥⇧F format · ⌘Y history"}
       </footer>

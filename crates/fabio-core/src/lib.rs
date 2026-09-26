@@ -10,6 +10,7 @@
 
 mod agent;
 mod audit;
+mod export;
 mod insights;
 mod plan;
 mod postgres;
@@ -24,6 +25,7 @@ use serde::{Deserialize, Serialize};
 
 pub use agent::{Agent, AgentConnection, Limits, Passwords, ReadOnlyDb};
 pub use audit::{AuditEntry, AuditLog, NewAuditEntry, Source};
+pub use export::{ExportFormat, RowWriter, format_rows};
 pub use insights::{Activity, Insights, SeqScanTable, TopStatement, UnusedIndex};
 pub use plan::{Detail, Finding, Plan, PlanNode, Severity};
 pub use postgres::{PgTarget, SslMode};
@@ -125,6 +127,22 @@ impl Db {
         match self {
             Db::Postgres(pg) => pg.count(relation, filters, timeout).await,
             Db::Sqlite(lite) => lite.count(relation, filters, timeout).await,
+        }
+    }
+
+    /// Every row matching `filters`, in `sort` then primary-key order, streamed
+    /// to `path`. No row cap. Returns how many rows were written.
+    pub async fn export_table(
+        &self,
+        relation: &RelationRef,
+        sort: Option<&Sort>,
+        filters: &[Filter],
+        format: ExportFormat,
+        path: &std::path::Path,
+    ) -> Result<u64> {
+        match self {
+            Db::Postgres(pg) => pg.export_table(relation, sort, filters, format, path).await,
+            Db::Sqlite(lite) => lite.export_table(relation, sort, filters, format, path).await,
         }
     }
 
@@ -274,7 +292,7 @@ pub struct PageRequest {
     pub limit: u32,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResultColumn {
     pub name: String,
     pub data_type: String,

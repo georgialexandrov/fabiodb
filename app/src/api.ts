@@ -115,6 +115,8 @@ export type Insights = {
   }[];
 };
 
+export type ExportFormat = "csv" | "json" | "markdown" | "insert";
+
 export type CompletionTable = { schema: string; name: string; columns: string[] };
 
 export type AuditEntry = {
@@ -147,6 +149,18 @@ export const api = {
     id: string,
     request: { relation: RelationRef; sort: Sort | null; filters: Filter[]; offset: number; limit: number },
   ) => invoke<Page>("page", { id, request }),
+  exportTable: (
+    id: string,
+    relation: RelationRef,
+    sort: Sort | null,
+    filters: Filter[],
+    format: ExportFormat,
+    path: string,
+  ) => invoke<number>("export_table", { id, relation, sort, filters, format, path }),
+  exportRows: (columns: ResultColumn[], rows: Rows, format: ExportFormat, table: RelationRef | null, path: string) =>
+    invoke<void>("export_rows", { columns, rows, format, table, path }),
+  copyRows: (columns: ResultColumn[], rows: Rows, format: ExportFormat, table: RelationRef | null) =>
+    invoke<string>("copy_rows", { columns, rows, format, table }),
   completionSchema: (id: string) => invoke<CompletionTable[]>("completion_schema", { id }),
   openSession: (connectionId: string) => invoke<string>("open_session", { connectionId }),
   closeSession: (id: string) => invoke<void>("close_session", { id }),
@@ -158,6 +172,10 @@ export const api = {
   history: (connectionId: string, limit: number) => invoke<AuditEntry[]>("history", { connectionId, limit }),
   agentActivity: (after: number) => invoke<AuditEntry[]>("agent_activity", { after }),
 };
+
+export const fileName = (path: string) => path.split(/[\\/]/).pop() ?? path;
+
+export const plural = (n: number, word: string) => `${n.toLocaleString()} ${n === 1 ? word : `${word}s`}`;
 
 export const sameRelation = (a: RelationRef | null, b: RelationRef | null) =>
   !!a && !!b && a.schema === b.schema && a.name === b.name;

@@ -4,8 +4,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use fabio_core::{
-    AuditEntry, AuditLog, CompletionTable, Count, Db, Filter, Insights, NewAuditEntry, Page, PageRequest, PgTarget,
-    Plan, QueryResult, Relation, RelationRef, SavedConnection, Source, Store, TableInfo, Target,
+    AuditEntry, AuditLog, CompletionTable, Count, Db, ExportFormat, Filter, Insights, NewAuditEntry, Page, PageRequest,
+    PgTarget, Plan, QueryResult, Relation, RelationRef, ResultColumn, Rows, SavedConnection, Sort, Source, Store,
+    TableInfo, Target, format_rows,
 };
 use serde::Serialize;
 use tauri::{Manager, State};
@@ -178,6 +179,41 @@ async fn page(app: State<'_, App>, id: String, request: PageRequest) -> Res<Page
     app.db(&id)?.page(&request).await.map_err(err)
 }
 
+/// Streams a whole table (under the grid's sort and filters) to a file, on its
+/// own connection so browsing carries on meanwhile. Returns the row count.
+#[tauri::command]
+async fn export_table(
+    app: State<'_, App>,
+    id: String,
+    relation: RelationRef,
+    sort: Option<Sort>,
+    filters: Vec<Filter>,
+    format: ExportFormat,
+    path: PathBuf,
+) -> Res<u64> {
+    let db = app.open_db(&id).await?;
+    db.export_table(&relation, sort.as_ref(), &filters, format, &path).await.map_err(err)
+}
+
+/// Saves rows already on screen (a query result) to a file.
+#[tauri::command]
+fn export_rows(
+    columns: Vec<ResultColumn>,
+    rows: Rows,
+    format: ExportFormat,
+    table: Option<RelationRef>,
+    path: PathBuf,
+) -> Res<()> {
+    let text = format_rows(format, &columns, &rows, table.as_ref()).map_err(err)?;
+    std::fs::write(&path, text).map_err(err)
+}
+
+/// Rows on screen as text, for the clipboard.
+#[tauri::command]
+fn copy_rows(columns: Vec<ResultColumn>, rows: Rows, format: ExportFormat, table: Option<RelationRef>) -> Res<String> {
+    format_rows(format, &columns, &rows, table.as_ref()).map_err(err)
+}
+
 #[tauri::command]
 async fn completion_schema(app: State<'_, App>, id: String) -> Res<Vec<CompletionTable>> {
     app.db(&id)?.completion_schema().await.map_err(err)
@@ -309,6 +345,9 @@ pub fn run() {
             count,
             page,
             completion_schema,
+            export_table,
+            export_rows,
+            copy_rows,
             open_session,
             close_session,
             set_write_mode,

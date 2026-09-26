@@ -165,9 +165,18 @@ page jump on the 5M-row table, before → now comparison.
 - The keychain may ask once to let `fabio-mcp` read a password the app saved
   (different binary). Chinook has no password, so the dev setup doesn't show it.
 
-### Phase 5 — Polish / open source
-Cell editing (PK required, show the UPDATE, run in a transaction), CSV/JSON
-export, ⌘K command palette, SSH tunnel, SSL `verify-full`, signed builds
+### Phase 5 — Polish (started)
+- ✅ **CI:** `dev/check.sh [--budgets]`; GitHub workflow written, not yet run (no remote).
+- ✅ **Export:** tables stream every matching row (grid's sort + filters) to
+  CSV / JSON / INSERT on their own connection — 5M rows to CSV in 1.3 s, 8 MB
+  peak. Query results save or copy (CSV, JSON, Markdown) the rows on screen,
+  never re-run. JSON uses column types when known (numbers ≤ 15 digits,
+  booleans, embedded json); query results have no types, so values stay text.
+  Not yet clicked through on screen.
+
+### Phase 5 — left
+Cell editing (PK required, show the UPDATE, run in a transaction), copy as
+INSERT/Markdown from a grid selection, ⌘K command palette, SSH tunnel, SSL `verify-full`, signed builds
 (macOS notarized, Windows, Linux AppImage via `tauri-action`), licence, README.
 
 ### Cross-cutting

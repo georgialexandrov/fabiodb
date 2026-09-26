@@ -281,3 +281,11 @@ button:disabled { opacity: 0.4; }
 .agent-entry.failed .agent-meta { color: var(--accent); }
 .agent-empty { margin: auto; max-width: 420px; text-align: center; }
 .agent-empty code { font-family: var(--mono); font-size: 12px; }
+
+/* Menus */
+.menu-anchor { position: relative; }
+.menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 5; min-width: 200px; padding: 4px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px #0002; display: flex; flex-direction: column; }
+.menu button { border: 0; background: none; text-align: left; padding: 5px 10px; border-radius: 5px; color: var(--text); }
+.menu button:hover { background: var(--hover); }
+.menu-separator { height: 1px; background: var(--line); margin: 4px 6px; }
+.menu-note { margin: 4px 10px 3px; font-size: 11px; color: var(--muted); }

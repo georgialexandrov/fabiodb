@@ -1,7 +1,7 @@
 //! Statement building shared by both engines. Identifiers are only ever taken
 //! from the described table, never from the request as-is.
 
-use crate::{Column, Error, Filter, FilterOp, PageRequest, Result};
+use crate::{Column, Error, Filter, FilterOp, PageRequest, Result, Sort};
 
 /// Double-quoted identifier; valid in Postgres and SQLite.
 pub fn quote(ident: &str) -> String {
@@ -79,18 +79,30 @@ pub fn page_statement(
     columns: &[Column],
     request: &PageRequest,
 ) -> Result<(String, Vec<String>)> {
-    let (clause, params) = where_clause(dialect, columns, &request.filters)?;
+    let (sql, params) = select_statement(dialect, from, columns, request.sort.as_ref(), &request.filters)?;
+    Ok((format!("{sql} LIMIT {} OFFSET {}", u64::from(request.limit) + 1, request.offset), params))
+}
+
+/// Every matching row, in page order. Export streams this.
+pub fn select_statement(
+    dialect: &Dialect,
+    from: &str,
+    columns: &[Column],
+    sort: Option<&Sort>,
+    filters: &[Filter],
+) -> Result<(String, Vec<String>)> {
+    let (clause, params) = where_clause(dialect, columns, filters)?;
 
     // Sort column first, then the primary key so paging is stable. Qualified,
     // because a bare name would bind to the select-list alias (Postgres casts
     // those to text, which sorts "10" before "9").
     let mut order = Vec::new();
-    if let Some(sort) = &request.sort {
+    if let Some(sort) = sort {
         let col = column(columns, &sort.column)?;
         order.push(format!("{from}.{} {}", quote(&col.name), if sort.descending { "DESC" } else { "ASC" }));
     }
     for pk in columns.iter().filter(|c| c.primary_key) {
-        if request.sort.as_ref().is_none_or(|s| s.column != pk.name) {
+        if sort.is_none_or(|s| s.column != pk.name) {
             order.push(format!("{from}.{} ASC", quote(&pk.name)));
         }
     }
@@ -100,7 +112,6 @@ pub fn page_statement(
     if !order.is_empty() {
         sql += &format!(" ORDER BY {}", order.join(", "));
     }
-    sql += &format!(" LIMIT {} OFFSET {}", u64::from(request.limit) + 1, request.offset);
     Ok((sql, params))
 }
 

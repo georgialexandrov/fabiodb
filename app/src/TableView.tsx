@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { chooseFile, ExportMenu } from "./ExportMenu";
 import { Grid } from "./Grid";
 import { Structure } from "./Structure";
 import {
   api,
+  fileName,
+  plural,
   type Count,
+  type ExportFormat,
   type Filter,
   type FilterOp,
   type Page,
@@ -50,6 +54,7 @@ export function TableView({ connectionId, relation, onOpen }: Props) {
   const [firstVisible, setFirstVisible] = useState(0);
   const [jump, setJump] = useState<{ row: number; nonce: number } | null>(null);
   const [base, setBase] = useState(0);
+  const [notice, setNotice] = useState<string | null>(null);
   const generation = useRef(0);
   const requested = useRef(new Set<number>());
 
@@ -146,6 +151,15 @@ export function TableView({ connectionId, relation, onOpen }: Props) {
 
   const columns = info?.columns ?? [];
 
+  /** Every row under the current sort and filters, streamed to a file by the core. */
+  async function exportTable(format: ExportFormat) {
+    const path = await chooseFile(relation.name, format);
+    if (!path) return null;
+    const started = performance.now();
+    const rows = await api.exportTable(connectionId, relation, sort, filters, format, path);
+    return `Saved ${plural(rows, "row")} to ${fileName(path)} · ${((performance.now() - started) / 1000).toFixed(1)} s`;
+  }
+
   return (
     <div className="table-view">
       <div className="toolbar" data-tauri-drag-region>
@@ -168,6 +182,19 @@ export function TableView({ connectionId, relation, onOpen }: Props) {
           >
             + Filter
           </button>
+        )}
+        <span className="grow" />
+        {tab === "data" && (
+          <ExportMenu
+            disabled={!meta}
+            onDone={setNotice}
+            note={filters.length > 0 ? "All rows that match the filters." : "All rows, in the grid's order."}
+            items={[
+              { label: "CSV…", run: () => exportTable("csv") },
+              { label: "JSON…", run: () => exportTable("json") },
+              { label: "INSERT statements…", run: () => exportTable("insert") },
+            ]}
+          />
         )}
       </div>
 
@@ -258,6 +285,14 @@ export function TableView({ connectionId, relation, onOpen }: Props) {
           <span>{totalLabel(count, exactTotal)}</span>
           <span className="sep">·</span>
           <span>{meta.elapsed_ms.toFixed(1)} ms</span>
+          {notice && (
+            <>
+              <span className="grow" />
+              <span className="ellipsis" onClick={() => setNotice(null)}>
+                {notice}
+              </span>
+            </>
+          )}
         </footer>
       )}
     </div>

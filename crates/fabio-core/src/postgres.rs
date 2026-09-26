@@ -5,10 +5,11 @@ use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use tokio_postgres::{Client, SimpleQueryMessage, types::ToSql};
 
+use crate::export::{self, ExportFormat, RowWriter};
 use crate::sql::{self, Dialect, quote};
 use crate::{
     Canceller, Column, CompletionTable, Count, Error, Filter, ForeignKey, Index, Page, PageRequest, QueryResult,
-    Relation, RelationKind, RelationRef, Result, ResultColumn, TableInfo,
+    Relation, RelationKind, RelationRef, Result, ResultColumn, Sort, TableInfo,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -374,6 +375,34 @@ impl Pg {
         }
     }
 
+    pub async fn export_table(
+        &self,
+        relation: &RelationRef,
+        sort: Option<&Sort>,
+        filters: &[Filter],
+        format: ExportFormat,
+        path: &std::path::Path,
+    ) -> Result<u64> {
+        let info = self.describe(relation).await?;
+        let from = format!("{}.{}", quote(&relation.schema), quote(&relation.name));
+        let (sql, params) = sql::select_statement(&DIALECT, &from, &info.columns, sort, filters)?;
+        let columns = result_columns(&info);
+        let out = export::create(path)?;
+        let written = async {
+            let mut writer = RowWriter::new(format, &columns, Some(relation), out)?;
+            // Rows are written as they arrive, so a table of any size fits.
+            let stream = self.client.query_raw(&sql, params.iter()).await?;
+            futures_util::pin_mut!(stream);
+            while let Some(row) = stream.next().await {
+                let row = row?;
+                writer.row(&(0..row.len()).map(|i| row.get(i)).collect::<Vec<Option<String>>>())?;
+            }
+            Ok(writer.finish()?.1)
+        }
+        .await;
+        export::remove_on_error(path, written)
+    }
+
     pub async fn page(&self, request: &PageRequest) -> Result<Page> {
         let started = Instant::now();
         let info = self.describe(&request.relation).await?;
@@ -410,6 +439,10 @@ const DIALECT: Dialect = Dialect {
     contains: |col, p| format!("strpos(lower({}::text), lower({p})) > 0", quote(&col.name)),
     select: |col| format!("{0}::text AS {0}", quote(&col.name)),
 };
+
+pub(crate) fn result_columns(info: &TableInfo) -> Vec<ResultColumn> {
+    info.columns.iter().map(|c| ResultColumn { name: c.name.clone(), data_type: c.data_type.clone() }).collect()
+}
 
 fn ms(started: Instant) -> f64 {
     started.elapsed().as_secs_f64() * 1000.0
