@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { ColumnFilter, filterText } from "./ColumnFilter";
 import { chooseFile, ExportMenu } from "./ExportMenu";
 import { Grid, type GridEdit } from "./Grid";
 import { Structure } from "./Structure";
@@ -10,7 +11,6 @@ import {
   type Count,
   type ExportFormat,
   type Filter,
-  type FilterOp,
   type Page,
   type Relation,
   type RelationRef,
@@ -25,19 +25,6 @@ const PAGE_SIZE = 100;
 // Bigger results scroll within a window of this many rows that moves on jumps.
 const WINDOW_ROWS = 500_000;
 
-const OPS: { op: FilterOp; label: string }[] = [
-  { op: "contains", label: "contains" },
-  { op: "eq", label: "=" },
-  { op: "ne", label: "≠" },
-  { op: "lt", label: "<" },
-  { op: "le", label: "≤" },
-  { op: "gt", label: ">" },
-  { op: "ge", label: "≥" },
-  { op: "is_null", label: "is null" },
-  { op: "is_not_null", label: "is not null" },
-];
-const needsValue = (op: FilterOp) => op !== "is_null" && op !== "is_not_null";
-
 type Props = { connectionId: string; relation: Relation; onOpen: (r: RelationRef) => void };
 
 /** Unsaved edits of one row, keyed by column name. */
@@ -47,7 +34,8 @@ export function TableView({ connectionId, relation, onOpen }: Props) {
   const [tab, setTab] = useState<"data" | "structure">("data");
   const [info, setInfo] = useState<TableInfo | null>(null);
   const [sort, setSort] = useState<Sort | null>(null);
-  const [draft, setDraft] = useState<Filter[]>([]);
+  // The column whose filter popover is open, and where its header mark is.
+  const [filtering, setFiltering] = useState<{ column: string; anchor: DOMRect } | null>(null);
   const [filters, setFilters] = useState<Filter[]>([]);
 
   // Pages load independently, so any page can be reached by scrolling or jumping.
@@ -70,7 +58,7 @@ export function TableView({ connectionId, relation, onOpen }: Props) {
 
   useEffect(() => {
     setSort(null);
-    setDraft([]);
+    setFiltering(null);
     setFilters([]);
     setInfo(null);
     setEdits({});
@@ -148,16 +136,6 @@ export function TableView({ connectionId, relation, onOpen }: Props) {
       setBase(nextBase);
     }
     setJump({ row: target - nextBase, nonce: Date.now() });
-  }
-
-  function applyFilters(next = draft) {
-    setFilters(next.filter((f) => !needsValue(f.op) || (f.value ?? "") !== ""));
-  }
-
-  function updateDraft(i: number, patch: Partial<Filter>, apply = false) {
-    const next = draft.map((f, j) => (j === i ? { ...f, ...patch } : f));
-    setDraft(next);
-    if (apply) applyFilters(next);
   }
 
   const columns = info?.columns ?? [];
@@ -272,14 +250,6 @@ export function TableView({ connectionId, relation, onOpen }: Props) {
             Structure
           </button>
         </div>
-        {tab === "data" && columns.length > 0 && (
-          <button
-            className="ghost"
-            onClick={() => setDraft([...draft, { column: columns[0].name, op: "contains", value: "" }])}
-          >
-            + Filter
-          </button>
-        )}
         <span className="grow" />
         {tab === "data" && (
           <ExportMenu
@@ -295,45 +265,38 @@ export function TableView({ connectionId, relation, onOpen }: Props) {
         )}
       </div>
 
-      {tab === "data" && draft.length > 0 && (
-        <div className="filters">
-          {draft.map((f, i) => (
-            <div className="filter" key={i}>
-              <select value={f.column} onChange={(e) => updateDraft(i, { column: e.target.value }, true)}>
-                {columns.map((c) => (
-                  <option key={c.name}>{c.name}</option>
-                ))}
-              </select>
-              <select value={f.op} onChange={(e) => updateDraft(i, { op: e.target.value as FilterOp }, true)}>
-                {OPS.map((o) => (
-                  <option key={o.op} value={o.op}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-              {needsValue(f.op) && (
-                <input
-                  autoFocus
-                  spellCheck={false}
-                  placeholder="value, ↵ to apply"
-                  value={f.value ?? ""}
-                  onChange={(e) => updateDraft(i, { value: e.target.value })}
-                  onKeyDown={(e) => e.key === "Enter" && applyFilters()}
-                />
-              )}
+      {tab === "data" && filters.length > 0 && (
+        <div className="filter-chips">
+          {filters.map((f, i) => (
+            <span key={i} className="chip">
               <button
-                className="ghost"
-                onClick={() => {
-                  const next = draft.filter((_, j) => j !== i);
-                  setDraft(next);
-                  applyFilters(next);
-                }}
+                className="chip-text"
+                onClick={(e) => setFiltering({ column: f.column, anchor: e.currentTarget.getBoundingClientRect() })}
               >
+                {filterText(f)}
+              </button>
+              <button className="chip-remove" onClick={() => setFilters(filters.filter((_, j) => j !== i))} title="Remove">
                 ✕
               </button>
-            </div>
+            </span>
           ))}
+          {filters.length > 1 && (
+            <button className="ghost" onClick={() => setFilters([])}>
+              Clear all
+            </button>
+          )}
         </div>
+      )}
+
+      {filtering && columns.some((c) => c.name === filtering.column) && (
+        <ColumnFilter
+          column={columns.find((c) => c.name === filtering.column)!}
+          anchor={filtering.anchor}
+          applied={filters.filter((f) => f.column === filtering.column)}
+          onAdd={(f) => setFilters([...filters, f])}
+          onRemove={(f) => setFilters(filters.filter((x) => x !== f))}
+          onClose={() => setFiltering(null)}
+        />
       )}
 
       {error && <p className="error">{error}</p>}
@@ -353,6 +316,8 @@ export function TableView({ connectionId, relation, onOpen }: Props) {
             edit={edit}
             table={relation}
             onNotice={setNotice}
+            filtered={(c) => filters.some((f) => f.column === meta.columns[c].name)}
+            onFilter={(c, anchor) => setFiltering({ column: meta.columns[c].name, anchor })}
           />
         )
       ) : (

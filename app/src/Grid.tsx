@@ -28,6 +28,9 @@ type Props = {
   table?: RelationRef;
   /** Says what a copy did, in the view's status line. */
   onNotice?: (message: string) => void;
+  /** Column filters: whether a column has one, and opening its popover (⌘F too). */
+  filtered?: (col: number) => boolean;
+  onFilter?: (col: number, anchor: DOMRect) => void;
 };
 
 type Cell = { row: number; col: number };
@@ -52,6 +55,8 @@ export type GridEdit = {
 /** Virtualized, random-access grid. Only on-screen rows are rendered. */
 export function Grid(props: Props) {
   const { columns, rowCount, row, sample, onRange, sort, onSort, scrollTo, rowOffset = 0, edit, table, onNotice } = props;
+  const { filtered, onFilter } = props;
+  const headerCells = useRef<(HTMLDivElement | null)[]>([]);
   const scroller = useRef<HTMLDivElement>(null);
   // `selected` is the active cell; with `anchor` it spans a rectangle (shift-click, shift-arrows).
   const [selected, setSelected] = useState<Cell | null>(null);
@@ -177,6 +182,9 @@ export function Grid(props: Props) {
       if ((e.metaKey || e.ctrlKey) && e.key === "c") {
         if (window.getSelection()?.toString()) return;
         copy("tsv");
+      } else if ((e.metaKey || e.ctrlKey) && e.key === "f" && onFilter) {
+        const cell = headerCells.current[selected.col];
+        if (cell) onFilter(selected.col, cell.getBoundingClientRect());
       } else if (e.metaKey || e.ctrlKey || e.altKey) {
         return;
       } else if (e.key === "ArrowUp") move(-1, 0, e.shiftKey);
@@ -210,6 +218,9 @@ export function Grid(props: Props) {
             {columns.map((c, i) => (
               <div
                 key={i}
+                ref={(el) => {
+                  headerCells.current[i] = el;
+                }}
                 className={`grid-cell ${isNumeric(c.data_type) ? "num" : ""} ${onSort ? "sortable" : ""}`}
                 style={{ width: widths[i] }}
                 onClick={() => clickHeader(c.name)}
@@ -218,6 +229,20 @@ export function Grid(props: Props) {
                 <span className="col-name">{c.name}</span>
                 {sort?.column === c.name && <span className="sort-mark">{sort.descending ? "↓" : "↑"}</span>}
                 <span className="col-type">{c.data_type}</span>
+                {onFilter && (
+                  <button
+                    className={`filter-mark ${filtered?.(i) ? "on" : ""}`}
+                    title={filtered?.(i) ? "Filtered — edit conditions" : "Filter this column (⌘F)"}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onFilter(i, e.currentTarget.getBoundingClientRect());
+                    }}
+                  >
+                    <svg width="11" height="11" viewBox="0 0 16 16" aria-hidden="true">
+                      <path d="M1.5 2h13l-5 6.2V14l-3-1.6V8.2z" fill="currentColor" />
+                    </svg>
+                  </button>
+                )}
               </div>
             ))}
           </div>
