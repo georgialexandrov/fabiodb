@@ -33,7 +33,7 @@ Mascot: Fabio the marmot — sits by the burrow, whistles when something is wron
 | Cold start to usable window | < 300 ms |
 | Idle memory | < 150 MB |
 | Open a table (first page, 100 rows) | < 100 ms on localhost |
-| Scroll 100k-row result | 60 fps, no blank rows |
+| Scroll 100k-row result | 60 fps, no blank rows (≤ 1% frames over 25 ms) |
 | Bundle size | < 20 MB |
 
 ## Stack

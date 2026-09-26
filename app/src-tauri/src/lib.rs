@@ -12,6 +12,7 @@ use fabio_core::{
 };
 use serde::Serialize;
 use tauri::{Manager, State};
+use tauri_plugin_window_state::StateFlags;
 
 static STARTED: OnceLock<Instant> = OnceLock::new();
 const KEYCHAIN_SERVICE: &str = "dev.fabio.app";
@@ -455,6 +456,29 @@ fn agent_activity(app: State<App>, after: i64) -> Res<Vec<AuditEntry>> {
     app.audit.agent_since(after, 500).map_err(err)
 }
 
+/// FABIO_BENCH=scroll runs the scroll benchmark instead of the app.
+#[tauri::command]
+fn bench_mode() -> Option<String> {
+    std::env::var("FABIO_BENCH").ok()
+}
+
+/// A benchmark's numbers: printed for bench/startup.py, then the app quits.
+#[tauri::command]
+fn bench_result(app: tauri::AppHandle, text: String) {
+    println!("{text}");
+    app.exit(0);
+}
+
+/// The page has rendered (DOM and styles in place): show the window, which
+/// starts hidden so its first frame has content, not white, even in dark mode.
+/// (A hidden window gets no animation frames, so this can't wait for paint.)
+#[tauri::command]
+fn app_rendered(app: tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+    }
+}
+
 /// Called by the frontend after its first paint. With `FABIO_EXIT_ON_READY=1`
 /// the app prints the startup time and quits — that's how `bench/startup.py`
 /// measures cold start.
@@ -473,13 +497,26 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         // Window size and position come back where they were.
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        // (Not visibility: the window shows itself after first paint.)
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(StateFlags::all() - StateFlags::VISIBLE)
+                .build(),
+        )
         .menu(menu::build)
         .on_menu_event(|app, event| menu::forward(app, event.id().as_ref()))
         .setup(|app| {
             let config = app.path().app_config_dir()?;
             let data = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data)?;
+            // Shown by app_ready after first paint; this is the safety net if the page never says so.
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(1500));
+                if let Some(window) = handle.get_webview_window("main") {
+                    let _ = window.show();
+                }
+            });
             app.manage(App {
                 store: Store::new(config.join("connections.json")),
                 snippets: Snippets::new(config.join("snippets.json")),
@@ -523,6 +560,9 @@ pub fn run() {
             save_snippet,
             delete_snippet,
             agent_activity,
+            app_rendered,
+            bench_mode,
+            bench_result,
             app_ready,
         ])
         .run(tauri::generate_context!())

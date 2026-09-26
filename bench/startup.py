@@ -57,7 +57,17 @@ def du_mb(path):
     return int(subprocess.run(["du", "-sk", path], capture_output=True, text=True).stdout.split()[0]) / 1024
 
 
+def scroll():
+    """Frame times scrolling 100k rows (FABIO_BENCH=scroll), as a dict of floats."""
+    env = {**os.environ, "FABIO_BENCH": "scroll"}
+    out = subprocess.run([BIN], env=env, capture_output=True, text=True, timeout=60).stdout
+    line = next(l for l in out.splitlines() if l.startswith("scroll_frames="))
+    return {k: float(v) for k, v in (pair.split("=") for pair in line.split())}
+
+
 START_BUDGET_MS = 300
+# 60 fps: at most 1% of frames over 25 ms (a visibly dropped frame), no blank rows.
+SCROLL_DROPPED_BUDGET_PCT = 1.0
 BUNDLE_BUDGET_MB = 20
 
 
@@ -78,6 +88,13 @@ if __name__ == "__main__":
         print(f"idle memory (RSS, app + {helpers} WebKit helpers): {mem:.0f} MB  [budget 150, not enforced yet]")
         if start > START_BUDGET_MS:
             over.append(f"cold start {start:.0f} ms > {START_BUDGET_MS} ms")
+        s = scroll()
+        print(
+            f"scroll 100k rows: p50 {s['p50_ms']:.1f} ms, p95 {s['p95_ms']:.1f} ms, max {s['max_ms']:.0f} ms, "
+            f"dropped {s['dropped_pct']:.1f}%, blank frames {s['blank_frames']:.0f}  [budget 60 fps: ≤ {SCROLL_DROPPED_BUDGET_PCT}% dropped, no blank]"
+        )
+        if s["dropped_pct"] > SCROLL_DROPPED_BUDGET_PCT or s["blank_frames"] > 0:
+            over.append(f"scroll dropped {s['dropped_pct']:.1f}% of frames, {s['blank_frames']:.0f} blank")
 
     bundle = du_mb(APP)
     print(f"bundle: {bundle:.1f} MB  [budget {BUNDLE_BUDGET_MB}]")

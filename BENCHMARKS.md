@@ -52,3 +52,22 @@ build can land on 300 ms; rerun before treating it as a regression.
 | Idle memory, RSS | 205 MB | < 150 MB | reported only |
 | Bundle | 8.2 MB | < 20 MB | ✅ |
 | JS main | 341 KB | — | up from 306 KB; lazy-load the dialogs next |
+
+## 2026-09-26 — speed pass: lazy views, window shown painted, scroll measured
+
+| Metric | Result | Budget | |
+|---|---|---|---|
+| Cold start, median of 20 (two runs) | 284 / 267 ms | < 300 ms | ✅ |
+| JS main | 262 KB | — | was 341 KB; views and dialogs load on first use |
+| Scroll 100k rows × 12 columns, fast fling, 3 s | p50 17.0 ms, p95 18.0 ms, max 20 ms, 0% dropped, 0 blank | 60 fps | ✅ first measurement |
+| Bundle | 8.3 MB | < 20 MB | ✅ |
+
+Scrolling runs at the display's 60 Hz with no dropped frames, so a canvas/WebGL
+grid would buy nothing measurable; the DOM grid stays. The benchmark uses
+synthetic rows (`FABIO_BENCH=scroll`), so it measures rendering, not page loads
+from a database.
+
+The window now starts hidden and is shown once the page has rendered (no white
+frame, even in dark mode). A hidden window gets no animation frames, so the
+first attempt (show on first paint) waited for the 1.5 s safety net: 1717 ms.
+The budget check caught it.

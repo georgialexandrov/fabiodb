@@ -3,13 +3,9 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { listen } from "@tauri-apps/api/event";
 import { AgentView, explainMode, formatMs } from "./AgentView";
-import { CommandPalette, type Command } from "./CommandPalette";
-import { ConnectionForm } from "./ConnectionForm";
-import { DiscoverDialog } from "./DiscoverDialog";
+import type { Command } from "./CommandPalette";
 import { ConnectionSwitcher, describe, markUsed } from "./ConnectionSwitcher";
-import { InsightsView } from "./InsightsView";
-import { QueryTab } from "./QueryTab";
-import { TableView } from "./TableView";
+import { lazyComponent } from "./lazy";
 import { applyTheme, nextTheme, savedTheme, THEME_LABELS, type Theme } from "./theme";
 import {
   api,
@@ -39,6 +35,14 @@ type Autorun = "run" | "explain" | "analyze";
 
 /** The sidebar mentions agent activity this recent. */
 const AGENT_RECENT_MS = 10 * 60_000;
+
+// Loaded when first used, so the first paint only waits for the shell.
+const CommandPalette = lazyComponent(() => import("./CommandPalette").then((m) => m.CommandPalette));
+const ConnectionForm = lazyComponent(() => import("./ConnectionForm").then((m) => m.ConnectionForm));
+const DiscoverDialog = lazyComponent(() => import("./DiscoverDialog").then((m) => m.DiscoverDialog));
+const InsightsView = lazyComponent(() => import("./InsightsView").then((m) => m.InsightsView));
+const QueryTab = lazyComponent(() => import("./QueryTab").then((m) => m.QueryTab));
+const TableView = lazyComponent(() => import("./TableView").then((m) => m.TableView));
 
 let nextTab = 1;
 
