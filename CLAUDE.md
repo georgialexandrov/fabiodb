@@ -1,0 +1,25 @@
+# Fabio
+
+Postgres + SQLite desktop client. Tauri 2 + Rust core + React. Plan and phases: `PLAN.md`.
+
+## Rules
+
+- Postgres and SQLite only. Keep the `Engine` trait narrow — autocomplete and
+  performance tooling are per-engine modules, not generic abstractions.
+- Test first. Core logic is tested against a real Postgres (`dev/pg.sh start`,
+  Chinook fixture in both engines), not mocks.
+- Tauri commands stay thin — logic lives in `crates/fabio-core` so the MCP server
+  shares it.
+- Agent access is read-only, enforced at the connection (`default_transaction_read_only`,
+  `statement_timeout`, row cap). Never rely on the prompt for safety.
+- Every statement goes through the audit log.
+- Performance budgets in `PLAN.md` are hard limits; record measurements in `BENCHMARKS.md`.
+- Finish the current phase's exit criteria before starting the next.
+
+## Commands
+
+- `dev/pg.sh start|stop|psql|reset` — local Postgres on :54329 with Chinook
+- `cargo test -p fabio-core` — core tests (needs dev Postgres running)
+- `cd app && pnpm tauri dev` — run the app
+- `cd app && pnpm tauri build --bundles app && python3 bench/startup.py` — budgets
+- Rust comes from Homebrew rustup: `export PATH=/opt/homebrew/opt/rustup/bin:$PATH`
