@@ -1,7 +1,7 @@
 //! Statement building shared by both engines. Identifiers are only ever taken
 //! from the described table, never from the request as-is.
 
-use crate::{Column, Error, FilterOp, PageRequest, Result};
+use crate::{Column, Error, Filter, FilterOp, PageRequest, Result};
 
 /// Double-quoted identifier; valid in Postgres and SQLite.
 pub fn quote(ident: &str) -> String {
@@ -27,17 +27,11 @@ pub struct Dialect {
     pub select: fn(&Column) -> String,
 }
 
-/// Builds `SELECT … LIMIT limit+1 OFFSET …` and its parameters. Fetching one
-/// extra row is how the caller learns whether there is a next page.
-pub fn page_statement(
-    dialect: &Dialect,
-    from: &str,
-    columns: &[Column],
-    request: &PageRequest,
-) -> Result<(String, Vec<String>)> {
+/// ` WHERE …` (or empty) for AND-ed filters, and its parameters.
+pub fn where_clause(dialect: &Dialect, columns: &[Column], filters: &[Filter]) -> Result<(String, Vec<String>)> {
     let mut params = Vec::new();
     let mut conditions = Vec::new();
-    for filter in &request.filters {
+    for filter in filters {
         let col = column(columns, &filter.column)?;
         let op = match filter.op {
             FilterOp::IsNull => {
@@ -67,6 +61,25 @@ pub fn page_statement(
             _ => (dialect.compare)(col, op, &placeholder),
         });
     }
+    let clause = if conditions.is_empty() { String::new() } else { format!(" WHERE {}", conditions.join(" AND ")) };
+    Ok((clause, params))
+}
+
+/// `SELECT count(*)` under the same filters as a page.
+pub fn count_statement(dialect: &Dialect, from: &str, columns: &[Column], filters: &[Filter]) -> Result<(String, Vec<String>)> {
+    let (clause, params) = where_clause(dialect, columns, filters)?;
+    Ok((format!("SELECT count(*) FROM {from}{clause}"), params))
+}
+
+/// Builds `SELECT … LIMIT limit+1 OFFSET …` and its parameters. Fetching one
+/// extra row is how the caller learns whether there is a next page.
+pub fn page_statement(
+    dialect: &Dialect,
+    from: &str,
+    columns: &[Column],
+    request: &PageRequest,
+) -> Result<(String, Vec<String>)> {
+    let (clause, params) = where_clause(dialect, columns, &request.filters)?;
 
     // Sort column first, then the primary key so paging is stable. Qualified,
     // because a bare name would bind to the select-list alias (Postgres casts
@@ -83,10 +96,7 @@ pub fn page_statement(
     }
 
     let select: Vec<_> = columns.iter().map(dialect.select).collect();
-    let mut sql = format!("SELECT {} FROM {from}", select.join(", "));
-    if !conditions.is_empty() {
-        sql += &format!(" WHERE {}", conditions.join(" AND "));
-    }
+    let mut sql = format!("SELECT {} FROM {from}{clause}", select.join(", "));
     if !order.is_empty() {
         sql += &format!(" ORDER BY {}", order.join(", "));
     }

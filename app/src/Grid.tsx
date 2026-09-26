@@ -5,36 +5,51 @@ import { isNumeric, type ResultColumn, type Rows, type Sort } from "./api";
 const ROW_HEIGHT = 26;
 const CHAR_WIDTH = 7.4;
 
+type Row = (string | null)[];
+
 type Props = {
   columns: ResultColumn[];
-  rows: Rows;
-  hasMore?: boolean;
-  onLoadMore?: () => void;
+  rowCount: number;
+  /** `undefined` while that row's page is still loading. */
+  row: (index: number) => Row | undefined;
+  /** Rows used to size columns. */
+  sample: Rows;
+  /** Called with the visible row range whenever it changes. */
+  onRange?: (first: number, last: number) => void;
   sort?: Sort | null;
   onSort?: (sort: Sort | null) => void;
+  /** Scrolls so `row` is at the top; bump `nonce` to repeat the same jump. */
+  scrollTo?: { row: number; nonce: number } | null;
+  /** Added to displayed row numbers when the grid shows a window of a larger result. */
+  rowOffset?: number;
 };
 
-/** Virtualized read-only grid. Rows render only while on screen. */
-export function Grid({ columns, rows, hasMore, onLoadMore, sort, onSort }: Props) {
+/** Virtualized, random-access grid. Only on-screen rows are rendered. */
+export function Grid({ columns, rowCount, row, sample, onRange, sort, onSort, scrollTo, rowOffset = 0 }: Props) {
   const scroller = useRef<HTMLDivElement>(null);
   const [selected, setSelected] = useState<{ row: number; col: number } | null>(null);
   const [detail, setDetail] = useState<{ column: ResultColumn; value: string | null } | null>(null);
 
-  const widths = useMemo(() => columnWidths(columns, rows), [columns, rows.length > 0]);
-  const totalWidth = widths.reduce((a, b) => a + b, 0) + 48;
+  const widths = useMemo(() => columnWidths(columns, sample), [columns, sample]);
+  const totalWidth = widths.reduce((a, b) => a + b, 0) + gutterWidth(rowOffset + rowCount);
 
   const virtualizer = useVirtualizer({
-    count: rows.length,
+    count: rowCount,
     getScrollElement: () => scroller.current,
     estimateSize: () => ROW_HEIGHT,
     overscan: 20,
   });
   const items = virtualizer.getVirtualItems();
-  const lastVisible = items.length ? items[items.length - 1].index : 0;
+  const first = items.length ? items[0].index : 0;
+  const last = items.length ? items[items.length - 1].index : 0;
 
   useEffect(() => {
-    if (hasMore && onLoadMore && lastVisible >= rows.length - 50) onLoadMore();
-  }, [lastVisible, rows.length, hasMore]);
+    onRange?.(first, last);
+  }, [first, last, rowCount]);
+
+  useEffect(() => {
+    if (scrollTo) virtualizer.scrollToIndex(scrollTo.row, { align: "start" });
+  }, [scrollTo]);
 
   useEffect(() => setSelected(null), [columns]);
 
@@ -42,13 +57,14 @@ export function Grid({ columns, rows, hasMore, onLoadMore, sort, onSort }: Props
     function onKey(e: KeyboardEvent) {
       if (!selected || !(e.metaKey || e.ctrlKey) || e.key !== "c") return;
       if (window.getSelection()?.toString()) return;
-      const value = rows[selected.row]?.[selected.col];
-      navigator.clipboard.writeText(value ?? "NULL");
+      const r = row(selected.row);
+      if (!r) return;
+      navigator.clipboard.writeText(r[selected.col] ?? "NULL");
       e.preventDefault();
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selected, rows]);
+  }, [selected, row]);
 
   function clickHeader(name: string) {
     if (!onSort) return;
@@ -57,12 +73,14 @@ export function Grid({ columns, rows, hasMore, onLoadMore, sort, onSort }: Props
     else onSort(null);
   }
 
+  const gutter = gutterWidth(rowOffset + rowCount);
+
   return (
     <div className="grid-wrap">
       <div className="grid" ref={scroller}>
         <div style={{ width: totalWidth, height: virtualizer.getTotalSize() + ROW_HEIGHT, position: "relative" }}>
           <div className="grid-row grid-head" style={{ width: totalWidth }}>
-            <div className="grid-cell grid-gutter" />
+            <div className="grid-cell grid-gutter" style={{ width: gutter }} />
             {columns.map((c, i) => (
               <div
                 key={i}
@@ -78,25 +96,31 @@ export function Grid({ columns, rows, hasMore, onLoadMore, sort, onSort }: Props
             ))}
           </div>
           {items.map((item) => {
-            const row = rows[item.index];
+            const r = row(item.index);
             return (
               <div
                 key={item.key}
-                className="grid-row"
+                className={`grid-row ${r ? "" : "pending"}`}
                 style={{ transform: `translateY(${item.start + ROW_HEIGHT}px)`, width: totalWidth }}
               >
-                <div className="grid-cell grid-gutter">{item.index + 1}</div>
-                {row.map((value, c) => (
-                  <div
-                    key={c}
-                    className={cellClass(columns[c], value, selected?.row === item.index && selected.col === c)}
-                    style={{ width: widths[c] }}
-                    onClick={() => setSelected({ row: item.index, col: c })}
-                    onDoubleClick={() => setDetail({ column: columns[c], value })}
-                  >
-                    {value === null ? "NULL" : preview(value)}
-                  </div>
-                ))}
+                <div className="grid-cell grid-gutter" style={{ width: gutter }}>
+                  {(rowOffset + item.index + 1).toLocaleString()}
+                </div>
+                {columns.map((column, c) => {
+                  if (!r) return <div key={c} className="grid-cell" style={{ width: widths[c] }} />;
+                  const value = r[c];
+                  return (
+                    <div
+                      key={c}
+                      className={cellClass(column, value, selected?.row === item.index && selected.col === c)}
+                      style={{ width: widths[c] }}
+                      onClick={() => setSelected({ row: item.index, col: c })}
+                      onDoubleClick={() => setDetail({ column, value })}
+                    >
+                      {value === null ? "NULL" : preview(value)}
+                    </div>
+                  );
+                })}
               </div>
             );
           })}
@@ -148,6 +172,11 @@ function preview(value: string) {
   const line = value.length > 300 ? value.slice(0, 300) : value;
   const nl = line.indexOf("\n");
   return nl === -1 ? line : `${line.slice(0, nl)} ⏎`;
+}
+
+/** Wide enough for the largest row number. */
+function gutterWidth(rowCount: number) {
+  return Math.max(48, rowCount.toLocaleString().length * 8 + 20);
 }
 
 function columnWidths(columns: ResultColumn[], rows: Rows) {

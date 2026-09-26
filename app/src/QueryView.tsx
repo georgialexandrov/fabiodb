@@ -40,7 +40,12 @@ export function QueryView({ connectionId }: { connectionId: string }) {
       />
       {error && <p className="error">{error}</p>}
       {result && (
-        <Grid columns={result.columns.map((name) => ({ name, data_type: "" }))} rows={result.rows} />
+        <Grid
+          columns={result.columns.map((name) => ({ name, data_type: "" }))}
+          rowCount={result.rows.length}
+          row={(i) => result.rows[i]}
+          sample={result.rows}
+        />
       )}
       <footer className="status">
         {running ? "Running…" : result ? `${result.rows.length} rows · ${result.elapsed_ms.toFixed(1)} ms` : "⌘↵ to run"}

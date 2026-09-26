@@ -59,6 +59,8 @@ export type Page = {
   sql: string;
 };
 
+export type Count = { rows: number | null; exact: boolean };
+
 export type QueryResult = { columns: string[]; rows: Rows; elapsed_ms: number };
 
 export const api = {
@@ -75,6 +77,7 @@ export const api = {
   disconnect: (id: string) => invoke<void>("disconnect", { id }),
   relations: (id: string) => invoke<Relation[]>("relations", { id }),
   describe: (id: string, relation: RelationRef) => invoke<TableInfo>("describe", { id, relation }),
+  count: (id: string, relation: RelationRef, filters: Filter[]) => invoke<Count>("count", { id, relation, filters }),
   page: (
     id: string,
     request: { relation: RelationRef; sort: Sort | null; filters: Filter[]; offset: number; limit: number },

@@ -113,6 +113,12 @@ current one's exit criteria hold.
 - Structure tab: columns, types, defaults, indexes, FKs, constraints.
 - **SQLite:** open a file (drag-drop or ⌘O), recent files list, same sidebar and
   grid. Opened read-only unless you switch the tab to write mode.
+- Pager under the grid: page N of M, total rows, jump to page — infinite scroll
+  stays. Totals are exact `count(*)` capped at 2 s; past that Postgres shows the
+  planner estimate. Results over 500k rows scroll within a window that moves on
+  jumps (WebKit can't lay out a 130M px tall element).
+- **Known limit:** counts share the connection with page loads, so scrolling
+  waits behind a slow count (≤ 2 s). Give counts their own connection if it bites.
 - **Exit:** you'd reach for Fabio instead of `psql` / `sqlite3` to look at a table.
 
 ### Phase 2 — Query (weekend 2)

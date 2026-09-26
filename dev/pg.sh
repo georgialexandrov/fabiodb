@@ -26,6 +26,16 @@ case "${1:-start}" in
       "$BIN/psql" -d postgres -q -v ON_ERROR_STOP=1 -f "$DIR/data/Chinook_PostgreSql.sql" >/dev/null
       "$BIN/psql" -d chinook -qc "create extension if not exists pg_stat_statements"
     fi
+    # A table big enough that counting it is slow: tests the count timeout,
+    # and gives Phase 3 something worth explaining.
+    if ! "$BIN/psql" -d chinook -tAc "select to_regclass('perf.big')" | grep -q big; then
+      "$BIN/psql" -d chinook -q -v ON_ERROR_STOP=1 <<'SQL'
+create schema perf;
+create table perf.big (id bigint primary key, bucket int not null, label text not null);
+insert into perf.big select g, g % 1000, md5(g::text) from generate_series(1, 5000000) g;
+analyze perf.big;
+SQL
+    fi
     echo "postgres://fabio@localhost:$PORT/chinook"
     ;;
   stop)  "$BIN/pg_ctl" -D "$PGDATA" -w stop ;;

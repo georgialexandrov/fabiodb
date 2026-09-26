@@ -4,6 +4,8 @@ Postgres + SQLite desktop client. Tauri 2 + Rust core + React. Plan and phases: 
 
 ## Rules
 
+- Any user-visible text follows `VOICE.md` (who Fabio is, how he talks).
+
 - Postgres and SQLite only. Keep the `Engine` trait narrow — autocomplete and
   performance tooling are per-engine modules, not generic abstractions.
 - Test first. Core logic is tested against a real Postgres (`dev/pg.sh start`,

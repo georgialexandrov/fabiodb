@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use fabio_core::{
-    Db, Page, PageRequest, PgTarget, QueryResult, Relation, RelationRef, SavedConnection, Store,
+    Count, Db, Filter, Page, PageRequest, PgTarget, QueryResult, Relation, RelationRef, SavedConnection, Store,
     TableInfo, Target,
 };
 use tauri::{Manager, State};
@@ -140,6 +140,14 @@ async fn describe(app: State<'_, App>, id: String, relation: RelationRef) -> Res
     app.db(&id)?.describe(&relation).await.map_err(err)
 }
 
+/// Exact counts get this long before falling back to the planner's estimate.
+const COUNT_TIMEOUT: Duration = Duration::from_secs(2);
+
+#[tauri::command]
+async fn count(app: State<'_, App>, id: String, relation: RelationRef, filters: Vec<Filter>) -> Res<Count> {
+    app.db(&id)?.count(&relation, &filters, COUNT_TIMEOUT).await.map_err(err)
+}
+
 #[tauri::command]
 async fn page(app: State<'_, App>, id: String, request: PageRequest) -> Res<Page> {
     app.db(&id)?.page(&request).await.map_err(err)
@@ -184,6 +192,7 @@ pub fn run() {
             disconnect,
             relations,
             describe,
+            count,
             page,
             run_query,
             app_ready,

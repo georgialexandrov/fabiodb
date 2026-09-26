@@ -3,7 +3,7 @@ import { Grid } from "./Grid";
 import { Structure } from "./Structure";
 import {
   api,
-  compactCount,
+  type Count,
   type Filter,
   type FilterOp,
   type Page,
@@ -14,7 +14,10 @@ import {
   type TableInfo,
 } from "./api";
 
-const PAGE_SIZE = 200;
+const PAGE_SIZE = 100;
+// WebKit can't lay out elements much taller than ~33M px (1.3M rows at 26 px).
+// Bigger results scroll within a window of this many rows that moves on jumps.
+const WINDOW_ROWS = 500_000;
 
 const OPS: { op: FilterOp; label: string }[] = [
   { op: "contains", label: "contains" },
@@ -37,11 +40,18 @@ export function TableView({ connectionId, relation, onOpen }: Props) {
   const [sort, setSort] = useState<Sort | null>(null);
   const [draft, setDraft] = useState<Filter[]>([]);
   const [filters, setFilters] = useState<Filter[]>([]);
-  const [page, setPage] = useState<Omit<Page, "rows"> | null>(null);
-  const [rows, setRows] = useState<Rows>([]);
+
+  // Pages load independently, so any page can be reached by scrolling or jumping.
+  const [pages, setPages] = useState<Record<number, Rows>>({});
+  const [meta, setMeta] = useState<Omit<Page, "rows" | "has_more"> | null>(null);
+  const [lastPage, setLastPage] = useState<number | null>(null);
+  const [count, setCount] = useState<Count | "counting" | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [firstVisible, setFirstVisible] = useState(0);
+  const [jump, setJump] = useState<{ row: number; nonce: number } | null>(null);
+  const [base, setBase] = useState(0);
   const generation = useRef(0);
+  const requested = useRef(new Set<number>());
 
   useEffect(() => {
     setSort(null);
@@ -51,30 +61,78 @@ export function TableView({ connectionId, relation, onOpen }: Props) {
     api.describe(connectionId, relation).then(setInfo, (e) => setError(String(e)));
   }, [connectionId, relation.schema, relation.name]);
 
-  const load = useCallback(
-    async (offset: number) => {
-      const gen = offset === 0 ? ++generation.current : generation.current;
-      setLoading(true);
-      if (offset === 0) setError(null);
+  const loadPage = useCallback(
+    async (n: number, gen: number) => {
+      requested.current.add(n);
       try {
-        const p = await api.page(connectionId, { relation, sort, filters, offset, limit: PAGE_SIZE });
-        if (gen !== generation.current) return; // a newer request replaced this one
-        setPage(p);
-        setRows((prev) => (offset === 0 ? p.rows : [...prev, ...p.rows]));
+        const p = await api.page(connectionId, { relation, sort, filters, offset: n * PAGE_SIZE, limit: PAGE_SIZE });
+        if (gen !== generation.current) return; // sort/filter/table changed meanwhile
+        setPages((prev) => ({ ...prev, [n]: p.rows }));
+        setMeta({ columns: p.columns, elapsed_ms: p.elapsed_ms, sql: p.sql });
+        if (!p.has_more) setLastPage((prev) => (prev === null ? n : Math.min(prev, n)));
       } catch (e) {
         if (gen !== generation.current) return;
+        requested.current.delete(n);
         setError(String(e));
-        if (offset === 0) setRows([]);
-      } finally {
-        if (gen === generation.current) setLoading(false);
       }
     },
     [connectionId, relation.schema, relation.name, sort, filters],
   );
 
+  // Reset whenever what we're looking at changes.
   useEffect(() => {
-    load(0);
-  }, [load]);
+    const gen = ++generation.current;
+    requested.current = new Set();
+    setPages({});
+    setLastPage(null);
+    setError(null);
+    setCount("counting");
+    setBase(0);
+    setJump({ row: 0, nonce: gen });
+    // First page before the count, so rows appear before the (slower) total.
+    loadPage(0, gen).then(() =>
+      api.count(connectionId, relation, filters).then(
+        (c) => gen === generation.current && setCount(c),
+        () => gen === generation.current && setCount(null),
+      ),
+    );
+  }, [loadPage]);
+
+  const loadedEnd = Object.keys(pages).reduce((m, k) => Math.max(m, (Number(k) + 1) * PAGE_SIZE), 0);
+  const exactTotal =
+    count !== "counting" && count?.exact && count.rows != null
+      ? count.rows
+      : lastPage !== null && pages[lastPage]
+        ? lastPage * PAGE_SIZE + pages[lastPage].length
+        : null;
+  const estimate = count !== "counting" && count && !count.exact ? count.rows : null;
+  // Unknown total: size to the estimate, or keep one page of runway past what's loaded.
+  const rowCount = exactTotal ?? Math.max(estimate ?? 0, loadedEnd + PAGE_SIZE);
+  const pageCount = Math.max(1, Math.ceil(rowCount / PAGE_SIZE));
+  const currentPage = Math.min(pageCount, Math.floor(firstVisible / PAGE_SIZE) + 1);
+
+  function onRange(windowFirst: number, windowLast: number) {
+    const [first, last] = [base + windowFirst, base + windowLast];
+    setFirstVisible(first);
+    const gen = generation.current;
+    for (let n = Math.floor(first / PAGE_SIZE); n <= Math.floor(last / PAGE_SIZE); n++) {
+      if (lastPage !== null && n > lastPage) break;
+      if (!requested.current.has(n)) loadPage(n, gen);
+    }
+  }
+
+  function goTo(page: number) {
+    const n = Math.min(Math.max(1, page), pageCount);
+    const target = (n - 1) * PAGE_SIZE;
+    let nextBase = base;
+    if (target < base || target >= base + WINDOW_ROWS) {
+      // Recentre the window on the target, page-aligned.
+      const centred = Math.max(0, Math.min(target - WINDOW_ROWS / 2, rowCount - WINDOW_ROWS));
+      nextBase = Math.floor(centred / PAGE_SIZE) * PAGE_SIZE;
+      setBase(nextBase);
+    }
+    setJump({ row: target - nextBase, nonce: Date.now() });
+  }
 
   function applyFilters(next = draft) {
     setFilters(next.filter((f) => !needsValue(f.op) || (f.value ?? "") !== ""));
@@ -157,28 +215,59 @@ export function TableView({ connectionId, relation, onOpen }: Props) {
       {error && <p className="error">{error}</p>}
 
       {tab === "data" ? (
-        page && (
+        meta && (
           <Grid
-            columns={page.columns}
-            rows={rows}
-            hasMore={page.has_more && !loading && !error}
-            onLoadMore={() => load(rows.length)}
+            columns={meta.columns}
+            rowCount={Math.min(rowCount - base, WINDOW_ROWS)}
+            rowOffset={base}
+            row={(i) => pages[Math.floor((base + i) / PAGE_SIZE)]?.[(base + i) % PAGE_SIZE]}
+            sample={pages[0] ?? []}
+            onRange={onRange}
             sort={sort}
             onSort={setSort}
+            scrollTo={jump}
           />
         )
       ) : (
         info && <Structure info={info} relation={relation} onOpen={onOpen} />
       )}
 
-      <footer className="status" title={page?.sql}>
-        {loading
-          ? "Loading…"
-          : page &&
-            `${rows.length.toLocaleString()}${page.has_more ? "+" : ""} rows` +
-              (relation.estimated_rows != null ? ` of ~${compactCount(relation.estimated_rows)}` : "") +
-              ` · ${page.elapsed_ms.toFixed(1)} ms`}
-      </footer>
+      {tab === "data" && meta && (
+        <footer className="status pager" title={meta.sql}>
+          <button className="ghost" disabled={currentPage <= 1} onClick={() => goTo(currentPage - 1)}>
+            ‹
+          </button>
+          <span>
+            Page{" "}
+            <input
+              className="page-input"
+              key={currentPage}
+              defaultValue={currentPage}
+              inputMode="numeric"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") goTo(Number(e.currentTarget.value.replace(/\D/g, "")) || 1);
+              }}
+            />{" "}
+            of {exactTotal === null ? "~" : ""}
+            {pageCount.toLocaleString()}
+          </span>
+          <button className="ghost" disabled={currentPage >= pageCount} onClick={() => goTo(currentPage + 1)}>
+            ›
+          </button>
+          <span className="sep">·</span>
+          <span>{totalLabel(count, exactTotal)}</span>
+          <span className="sep">·</span>
+          <span>{meta.elapsed_ms.toFixed(1)} ms</span>
+        </footer>
+      )}
     </div>
   );
+}
+
+function totalLabel(count: Count | "counting" | null, exactTotal: number | null) {
+  const rows = (n: number) => `${n.toLocaleString()} ${n === 1 ? "row" : "rows"}`;
+  if (exactTotal !== null) return rows(exactTotal);
+  if (count === "counting") return "counting…";
+  if (count?.rows != null) return `~${rows(count.rows)} (estimate)`;
+  return "too many rows to count quickly";
 }

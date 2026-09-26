@@ -6,7 +6,7 @@ use tokio_postgres::{Client, SimpleQueryMessage, types::ToSql};
 
 use crate::sql::{self, Dialect, quote};
 use crate::{
-    Column, Error, ForeignKey, Index, Page, PageRequest, QueryResult, Relation, RelationKind,
+    Column, Count, Error, Filter, ForeignKey, Index, Page, PageRequest, QueryResult, Relation, RelationKind,
     RelationRef, Result, ResultColumn, TableInfo,
 };
 
@@ -59,6 +59,8 @@ impl PgTarget {
 
 pub struct Pg {
     client: Client,
+    /// Kept for cancel requests, which open their own connection.
+    tls: postgres_native_tls::MakeTlsConnector,
 }
 
 impl Pg {
@@ -82,8 +84,8 @@ impl Pg {
         let tls = native_tls::TlsConnector::builder()
             .danger_accept_invalid_certs(true)
             .build()?;
-        let (client, connection) =
-            config.connect(postgres_native_tls::MakeTlsConnector::new(tls)).await?;
+        let tls = postgres_native_tls::MakeTlsConnector::new(tls);
+        let (client, connection) = config.connect(tls.clone()).await?;
         tokio::spawn(connection);
 
         // Read-only until the user explicitly asks for writes (PLAN principle 4).
@@ -95,7 +97,7 @@ impl Pg {
                 tz.replace('\'', "''")
             ))
             .await?;
-        Ok(Pg { client })
+        Ok(Pg { client, tls })
     }
 
     pub async fn query(&self, sql: &str) -> Result<QueryResult> {
@@ -233,6 +235,34 @@ impl Pg {
                 })
                 .collect(),
         })
+    }
+
+    pub async fn count(&self, relation: &RelationRef, filters: &[Filter], timeout: Duration) -> Result<Count> {
+        let info = self.describe(relation).await?;
+        let from = format!("{}.{}", quote(&relation.schema), quote(&relation.name));
+        let (sql, params) = sql::count_statement(&DIALECT, &from, &info.columns, filters)?;
+        let params: Vec<&(dyn ToSql + Sync)> = params.iter().map(|p| p as _).collect();
+
+        match tokio::time::timeout(timeout, self.client.query_one(&sql, &params)).await {
+            Ok(row) => Ok(Count { rows: Some(row?.get::<_, i64>(0) as u64), exact: true }),
+            Err(_) => {
+                self.client.cancel_token().cancel_query(self.tls.clone()).await?;
+                // Without filters the planner's estimate is a fair stand-in.
+                let estimate = if filters.is_empty() {
+                    self.client
+                        .query_one(
+                            "SELECT CASE WHEN reltuples >= 0 THEN reltuples::int8 END FROM pg_class WHERE oid = $1",
+                            &[&self.oid(relation).await?],
+                        )
+                        .await?
+                        .get::<_, Option<i64>>(0)
+                        .map(|n| n as u64)
+                } else {
+                    None
+                };
+                Ok(Count { rows: estimate, exact: false })
+            }
+        }
     }
 
     pub async fn page(&self, request: &PageRequest) -> Result<Page> {

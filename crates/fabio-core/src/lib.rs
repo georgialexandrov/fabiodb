@@ -10,6 +10,7 @@ mod sqlite;
 mod store;
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -55,6 +56,15 @@ impl Db {
         match self {
             Db::Postgres(pg) => pg.describe(relation).await,
             Db::Sqlite(lite) => lite.describe(relation).await,
+        }
+    }
+
+    /// Rows matching `filters`. Gives up after `timeout` (cancelling the query)
+    /// so a huge table can't hold the connection; see [`Count`].
+    pub async fn count(&self, relation: &RelationRef, filters: &[Filter], timeout: Duration) -> Result<Count> {
+        match self {
+            Db::Postgres(pg) => pg.count(relation, filters, timeout).await,
+            Db::Sqlite(lite) => lite.count(relation, filters, timeout).await,
         }
     }
 
@@ -188,6 +198,14 @@ pub struct Page {
     pub elapsed_ms: f64,
     /// The statement that produced this page, with placeholders.
     pub sql: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct Count {
+    /// `None` when counting timed out and there's no estimate to fall back on.
+    pub rows: Option<u64>,
+    /// `false` when `rows` is the planner's estimate.
+    pub exact: bool,
 }
 
 #[derive(Debug, thiserror::Error)]

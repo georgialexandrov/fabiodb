@@ -265,3 +265,45 @@ async fn numeric_columns_sort_as_numbers_not_text() {
     assert!(ms.is_sorted(), "{ms:?}");
     assert_eq!(ms[0], 1071);
 }
+
+// --- counting -------------------------------------------------------------
+
+use std::time::Duration;
+
+const PLENTY: Duration = Duration::from_secs(5);
+
+#[tokio::test]
+async fn counts_all_rows_exactly() {
+    let pg = postgres().await.count(&rel("public", "track"), &[], PLENTY).await.unwrap();
+    let lite = sqlite().await.count(&rel("main", "Track"), &[], PLENTY).await.unwrap();
+
+    assert_eq!((pg.rows, pg.exact), (Some(3503), true));
+    assert_eq!((lite.rows, lite.exact), (Some(3503), true));
+}
+
+#[tokio::test]
+async fn count_applies_filters() {
+    let filters = [Filter { column: "composer".into(), op: FilterOp::IsNull, value: None }];
+    let count = postgres().await.count(&rel("public", "track"), &filters, PLENTY).await.unwrap();
+
+    assert_eq!(count.rows, Some(977));
+}
+
+#[tokio::test]
+async fn slow_postgres_count_falls_back_to_the_estimate() {
+    let db = postgres().await;
+    let count = db.count(&rel("perf", "big"), &[], Duration::from_millis(5)).await.unwrap();
+
+    assert!(!count.exact);
+    assert!(count.rows.is_some_and(|n| n > 4_000_000), "{count:?}");
+    // The cancelled count must not poison the connection.
+    assert_eq!(db.query("select 1").await.unwrap().rows, [[Some("1".into())]]);
+}
+
+#[tokio::test]
+async fn slow_filtered_count_is_unknown() {
+    let filters = [filter("bucket", FilterOp::Gt, "10")];
+    let count = postgres().await.count(&rel("perf", "big"), &filters, Duration::from_millis(5)).await.unwrap();
+
+    assert_eq!((count.rows, count.exact), (None, false));
+}

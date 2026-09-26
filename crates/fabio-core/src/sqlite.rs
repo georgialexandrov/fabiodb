@@ -1,12 +1,12 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use rusqlite::{Connection, OpenFlags, params_from_iter, types::ValueRef};
 
 use crate::sql::{self, Dialect, quote};
 use crate::{
-    Column, Error, ForeignKey, Index, Page, PageRequest, QueryResult, Relation, RelationKind,
+    Column, Count, Error, Filter, ForeignKey, Index, Page, PageRequest, QueryResult, Relation, RelationKind,
     RelationRef, Result, ResultColumn, Rows, TableInfo,
 };
 
@@ -74,6 +74,28 @@ impl Lite {
     pub async fn describe(&self, relation: &RelationRef) -> Result<TableInfo> {
         let relation = relation.clone();
         self.with(move |conn| describe(conn, &relation)).await
+    }
+
+    pub async fn count(&self, relation: &RelationRef, filters: &[Filter], timeout: Duration) -> Result<Count> {
+        let interrupt = self.conn.lock().expect("sqlite connection poisoned").get_interrupt_handle();
+        let (relation, filters) = (relation.clone(), filters.to_vec());
+        let counting = self.with(move |conn| {
+            let info = describe(conn, &relation)?;
+            let from = format!("{}.{}", quote(&relation.schema), quote(&relation.name));
+            let (sql, params) = sql::count_statement(&DIALECT, &from, &info.columns, &filters)?;
+            Ok(conn.query_row(&sql, params_from_iter(params), |r| r.get::<_, i64>(0))?)
+        });
+        tokio::pin!(counting);
+        match tokio::time::timeout(timeout, &mut counting).await {
+            Ok(rows) => Ok(Count { rows: Some(rows? as u64), exact: true }),
+            Err(_) => {
+                interrupt.interrupt();
+                // Let the interrupted statement finish unwinding before the
+                // connection is used again; SQLite keeps no row estimate.
+                let _ = counting.await;
+                Ok(Count { rows: None, exact: false })
+            }
+        }
     }
 
     pub async fn page(&self, request: &PageRequest) -> Result<Page> {
