@@ -15,6 +15,9 @@ pub struct SavedConnection {
     pub id: String,
     pub name: String,
     pub target: Target,
+    /// Agents (through the MCP server) may query this connection, read-only.
+    #[serde(default)]
+    pub agent: bool,
 }
 
 pub struct Store {
@@ -76,6 +79,7 @@ impl Store {
                 id: String::new(),
                 name: path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned()),
                 target: Target::Sqlite { path: path.to_owned() },
+                agent: false,
             }),
         }
     }

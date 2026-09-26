@@ -19,6 +19,7 @@ fn pg(password: Option<&str>) -> SavedConnection {
             database: "app".into(),
             ssl: SslMode::Prefer,
         }),
+        agent: false,
     }
 }
 
@@ -68,4 +69,13 @@ fn opening_the_same_sqlite_file_twice_reuses_the_entry() {
     assert_eq!(first, second);
     assert_eq!(first.name, "music.db");
     assert_eq!(store.list().unwrap().len(), 1);
+}
+
+#[test]
+fn older_files_without_the_agent_flag_still_load() {
+    let (store, path) = temp_store();
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, r#"[{"id":"a","name":"x","target":{"engine":"sqlite","path":"/tmp/x.db"}}]"#).unwrap();
+
+    assert!(!store.list().unwrap()[0].agent);
 }

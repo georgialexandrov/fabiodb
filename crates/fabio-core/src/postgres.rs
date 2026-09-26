@@ -137,22 +137,62 @@ impl Pg {
         &self.client
     }
 
-    pub async fn explain(&self, sql: &str, analyze: bool) -> Result<crate::Plan> {
+    /// Runs one statement inside a read-only transaction that is always rolled
+    /// back, so neither the statement nor any `SET` it makes can write or
+    /// outlive it. For agents.
+    pub async fn query_guarded(&self, sql: &str, max_rows: usize) -> Result<QueryResult> {
+        self.client.batch_execute("BEGIN /* fabio */ READ ONLY").await?;
+        let result = match self.check_single(sql).await {
+            Ok(()) => self.query(sql, max_rows).await,
+            Err(e) => Err(e),
+        };
+        let rolled_back = self.client.batch_execute("ROLLBACK /* fabio */").await;
+        let result = result?;
+        rolled_back?;
+        Ok(result)
+    }
+
+    /// The simple-query protocol runs any number of statements; a `COMMIT` in
+    /// the middle would end the guarding transaction. Parsing the text as a
+    /// prepared statement fails unless it is exactly one statement.
+    async fn check_single(&self, sql: &str) -> Result<()> {
+        match self.client.prepare(sql).await {
+            Ok(_) => Ok(()),
+            Err(e) => match Error::from(e) {
+                Error::Postgres { message, .. } if message.contains("multiple commands") => Err(Error::Invalid(ONE_STATEMENT.into())),
+                other => Err(other),
+            },
+        }
+    }
+
+    pub async fn set_statement_timeout(&self, timeout: Duration) -> Result<()> {
+        Ok(self
+            .client
+            .batch_execute(&format!("SET /* fabio */ statement_timeout = {}", timeout.as_millis()))
+            .await?)
+    }
+
+    pub async fn explain(&self, sql: &str, analyze: bool, guarded: bool) -> Result<crate::Plan> {
         // VERBOSE is what puts the schema into the JSON.
         let options = if analyze { "ANALYZE, BUFFERS, VERBOSE, FORMAT JSON" } else { "VERBOSE, FORMAT JSON" };
         // ANALYZE executes the statement; the rollback makes that harmless.
         let prefix = format!("EXPLAIN ({options}) ");
-        self.client.batch_execute("BEGIN").await?;
-        let explained = self.client.simple_query(&format!("{prefix}{sql}")).await;
-        let rolled_back = self.client.batch_execute("ROLLBACK").await;
-        // Report error positions against the user's statement, not our prefix.
-        let messages = explained.map_err(|e| match Error::from(e) {
-            Error::Postgres { message, position } => Error::Postgres {
-                message,
-                position: position.and_then(|p| p.checked_sub(prefix.chars().count() as u32)),
-            },
-            other => other,
-        })?;
+        self.client
+            .batch_execute(if guarded { "BEGIN /* fabio */ READ ONLY" } else { "BEGIN /* fabio */" })
+            .await?;
+        let explained = match if guarded { self.check_single(sql).await } else { Ok(()) } {
+            // Report error positions against the user's statement, not our prefix.
+            Ok(()) => self.client.simple_query(&format!("{prefix}{sql}")).await.map_err(|e| match Error::from(e) {
+                Error::Postgres { message, position } => Error::Postgres {
+                    message,
+                    position: position.and_then(|p| p.checked_sub(prefix.chars().count() as u32)),
+                },
+                other => other,
+            }),
+            Err(e) => Err(e),
+        };
+        let rolled_back = self.client.batch_execute("ROLLBACK /* fabio */").await;
+        let messages = explained?;
         rolled_back?;
         let raw = messages
             .iter()
@@ -372,6 +412,8 @@ impl Pg {
         })
     }
 }
+
+pub(crate) const ONE_STATEMENT: &str = "Agents run one statement at a time. Send the others separately.";
 
 const DIALECT: Dialect = Dialect {
     param: |n| format!("${n}::text"),

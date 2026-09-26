@@ -1,4 +1,4 @@
-//! Database access shared by the desktop app and (later) the MCP server.
+//! Database access shared by the desktop app and the MCP server.
 //!
 //! `Db` is the narrow surface both engines share: run a statement, list
 //! relations, describe one, page its rows. Values come back as text in the
@@ -8,6 +8,7 @@
 // they can be told apart from the user's in pg_stat_statements and server logs.
 // (A leading comment would be stripped by pg_stat_statements.)
 
+mod agent;
 mod audit;
 mod insights;
 mod plan;
@@ -21,6 +22,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+pub use agent::{Agent, AgentConnection, Limits, Passwords, ReadOnlyDb};
 pub use audit::{AuditEntry, AuditLog, NewAuditEntry, Source};
 pub use insights::{Activity, Insights, SeqScanTable, TopStatement, UnusedIndex};
 pub use plan::{Detail, Finding, Plan, PlanNode, Severity};
@@ -96,7 +98,7 @@ impl Db {
     pub async fn explain(&self, sql: &str, analyze: bool) -> Result<Plan> {
         let sql = sql.trim().trim_end_matches(';');
         match self {
-            Db::Postgres(pg) => pg.explain(sql, analyze).await,
+            Db::Postgres(pg) => pg.explain(sql, analyze, false).await,
             Db::Sqlite(lite) => lite.explain(sql).await,
         }
     }

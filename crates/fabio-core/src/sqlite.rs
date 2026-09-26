@@ -63,6 +63,47 @@ impl Lite {
         .await
     }
 
+    /// Agent mode: no ATTACH (it could reach other files on disk). The file is
+    /// already open read-only; `query_only` is set again before each statement.
+    pub async fn guard(&self) -> Result<()> {
+        self.with(|conn| {
+            conn.set_limit(rusqlite::limits::Limit::SQLITE_LIMIT_ATTACHED, 0)?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// One statement, read-only, interrupted after `timeout`. For agents.
+    pub async fn query_guarded(&self, sql: &str, max_rows: usize, timeout: Duration) -> Result<QueryResult> {
+        let sql = sql.to_owned();
+        self.with_timeout(timeout, move |conn| {
+            let started = Instant::now();
+            conn.execute_batch("PRAGMA query_only = ON")?;
+            let mut statement = conn.prepare(&sql).map_err(one_statement)?;
+            let columns: Vec<String> = statement.column_names().into_iter().map(str::to_owned).collect();
+            let (rows, truncated) = collect_rows(statement.raw_query(), columns.len(), max_rows)?;
+            Ok(QueryResult { columns, rows, truncated, elapsed_ms: ms(started) })
+        })
+        .await
+    }
+
+    async fn with_timeout<T: Send + 'static>(
+        &self,
+        timeout: Duration,
+        f: impl FnOnce(&Connection) -> Result<T> + Send + 'static,
+    ) -> Result<T> {
+        let interrupt = self.interrupt.lock().expect("interrupt handle poisoned").clone();
+        let running = self.with(f);
+        tokio::pin!(running);
+        match tokio::time::timeout(timeout, &mut running).await {
+            Ok(result) => result,
+            Err(_) => {
+                interrupt.interrupt();
+                running.await
+            }
+        }
+    }
+
     pub async fn relations(&self) -> Result<Vec<Relation>> {
         self.with(|conn| {
             let schemas: Vec<String> = conn
@@ -243,6 +284,13 @@ const DIALECT: Dialect = Dialect {
     contains: |col, p| format!("instr(lower({}), lower({p})) > 0", quote(&col.name)),
     select: |col| quote(&col.name),
 };
+
+fn one_statement(e: rusqlite::Error) -> Error {
+    match e {
+        rusqlite::Error::MultipleStatement => Error::Invalid(crate::postgres::ONE_STATEMENT.into()),
+        other => other.into(),
+    }
+}
 
 /// Up to `max` rows, and whether more were left.
 fn collect_rows(mut cursor: rusqlite::Rows<'_>, width: usize, max: usize) -> Result<(Rows, bool)> {
