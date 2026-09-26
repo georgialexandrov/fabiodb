@@ -200,7 +200,7 @@ impl Pg {
     }
 
     pub fn canceller(&self) -> Canceller {
-        Canceller::Postgres(self.client.cancel_token(), self.tls.clone())
+        Canceller::Postgres(Box::new((self.client.cancel_token(), self.tls.clone())))
     }
 
     pub async fn set_writable(&self, writable: bool) -> Result<()> {

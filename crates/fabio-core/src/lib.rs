@@ -151,14 +151,15 @@ pub struct QueryResult {
 }
 
 pub enum Canceller {
-    Postgres(tokio_postgres::CancelToken, postgres_native_tls::MakeTlsConnector),
+    /// Boxed: a cancel token plus TLS connector is ~240 bytes, the SQLite handle 8.
+    Postgres(Box<(tokio_postgres::CancelToken, postgres_native_tls::MakeTlsConnector)>),
     Sqlite(std::sync::Arc<rusqlite::InterruptHandle>),
 }
 
 impl Canceller {
     pub async fn cancel(&self) -> Result<()> {
         match self {
-            Canceller::Postgres(token, tls) => Ok(token.cancel_query(tls.clone()).await?),
+            Canceller::Postgres(pg) => Ok(pg.0.cancel_query(pg.1.clone()).await?),
             Canceller::Sqlite(handle) => {
                 handle.interrupt();
                 Ok(())

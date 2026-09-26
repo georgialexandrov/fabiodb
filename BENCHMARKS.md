@@ -30,3 +30,16 @@ Notes:
 | Idle memory, RSS | 188 MB | < 150 MB | ❌ same caveat as above |
 | Bundle | 6.3 MB | < 20 MB | ✅ |
 | Open `track` first page (200 rows), in-app | 1.1 ms | < 100 ms | ✅ |
+
+## 2026-09-26 — Phase 4 (agent panel, MCP server), first run of `dev/check.sh --budgets`
+
+| Metric | Result | Budget | |
+|---|---|---|---|
+| Cold start, median of 15 | 283 ms (max 284) | < 300 ms | ✅ unchanged since Phase 1 |
+| Cold start, median of 10 right after a build | 300 ms (max 317) | < 300 ms | on the line: first runs after a build are slower |
+| Idle memory, RSS | 193 MB | < 150 MB | reported, not enforced (same caveat) |
+| Bundle | 7.8 MB | < 20 MB | ✅ |
+| JS: main / editor (lazy) / formatter (lazy) | 306 KB / 370 KB / 262 KB | — | main was 222 KB in Phase 0 |
+
+The check now fails on start > 300 ms or bundle > 20 MB. A run right after a
+build can land on 300 ms; rerun before treating it as a regression.

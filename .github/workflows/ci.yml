@@ -1,0 +1,75 @@
+# What dev/check.sh runs locally, on every push and pull request.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      FABIO_TEST_PG_URL: postgres://fabio@localhost:54329/chinook
+      PGHOST: localhost
+      PGPORT: "54329"
+      PGUSER: fabio
+    steps:
+      - uses: actions/checkout@v4
+
+      # A service container can't take server flags, and Insights needs
+      # pg_stat_statements preloaded.
+      - name: Postgres 18
+        run: |
+          docker run -d --name pg -p 54329:5432 \
+            -e POSTGRES_USER=fabio -e POSTGRES_HOST_AUTH_METHOD=trust \
+            postgres:18 -c shared_preload_libraries=pg_stat_statements
+
+      - name: System packages (Tauri, keyring, psql)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev libdbus-1-dev pkg-config postgresql-client
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+        working-directory: app
+
+      - name: Load Chinook
+        run: |
+          until pg_isready -q; do sleep 1; done
+          dev/pg.sh load
+
+      - run: dev/check.sh
+
+  budgets:
+    # Start time is only comparable on the Mac the budget was set on
+    # (dev/check.sh --budgets); bundle size is comparable anywhere.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile && pnpm tauri build --bundles app
+        working-directory: app
+      - run: python3 bench/startup.py --bundle-only

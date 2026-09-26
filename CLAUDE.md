@@ -27,7 +27,8 @@ Postgres + SQLite desktop client. Tauri 2 + Rust core + React.
 
 ## Commands
 
-- `dev/pg.sh start|stop|psql|reset` — local Postgres on :54329 with Chinook
+- `dev/check.sh [--budgets]` — everything CI runs (fmt, tsc, Vitest, clippy -D warnings, tests); `--budgets` builds the release app and fails over budget
+- `dev/pg.sh start|stop|psql|reset|load` — local Postgres on :54329 with Chinook (`load`: into any running server, as CI does)
 - `cargo test -p fabio-core` — core tests (needs dev Postgres running)
 - `cd app && pnpm test` — frontend unit tests (Vitest)
 - `cargo run -p fabio-core --example explain -- "<sql>"` — print plan findings against dev

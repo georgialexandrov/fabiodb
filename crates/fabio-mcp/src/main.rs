@@ -110,12 +110,18 @@ fn error(id: Value, code: i64, message: &str) -> Value {
     json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}})
 }
 
+/// No keychain (a Linux box without a secret service) is the same as no saved
+/// password: connections that need none still work, and the others fail with
+/// the server's own authentication error.
 fn keychain_password(id: &str) -> fabio_core::Result<Option<String>> {
-    let entry = keyring::Entry::new(KEYCHAIN_SERVICE, id).map_err(|e| fabio_core::Error::Invalid(e.to_string()))?;
-    match entry.get_password() {
+    let found = keyring::Entry::new(KEYCHAIN_SERVICE, id).and_then(|entry| entry.get_password());
+    match found {
         Ok(p) => Ok(Some(p)),
         Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(fabio_core::Error::Invalid(format!("keychain: {e}"))),
+        Err(e) => {
+            eprintln!("fabio-mcp: keychain unavailable, connecting without a password: {e}");
+            Ok(None)
+        }
     }
 }
 

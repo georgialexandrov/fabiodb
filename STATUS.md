@@ -171,7 +171,10 @@ export, ⌘K command palette, SSH tunnel, SSL `verify-full`, signed builds
 (macOS notarized, Windows, Linux AppImage via `tauri-action`), licence, README.
 
 ### Cross-cutting
-- **CI:** none yet (tests + startup budget run by hand).
+- **CI:** `dev/check.sh` runs everything locally (`--budgets` adds the release
+  build and fails over budget). `.github/workflows/ci.yml` does the same on
+  Ubuntu with Postgres 18 in Docker, plus the bundle size on macOS — **never
+  run yet: the repo has no remote.** Expect to fix a thing or two on its first run.
 - **Counts share the browse connection** with page loads, so scrolling waits
   behind a slow count (≤ 2 s). Give counts their own connection if it bites.
 - **Keyset paging** instead of OFFSET for deep pages on huge tables.
