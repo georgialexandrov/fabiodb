@@ -77,6 +77,10 @@ export default function App() {
       if (fresh.length === 0) return;
       lastAgentId.current = fresh[0].id;
       setAgentLog((log) => [...fresh, ...log].slice(0, 1000));
+      // The MCP server saved a connection: show it in the switcher.
+      if (fresh.some((e) => e.sql.startsWith("-- Agent added connection"))) {
+        api.listConnections().then(setConnections, () => {});
+      }
     }
     poll();
     const timer = setInterval(poll, 2000);

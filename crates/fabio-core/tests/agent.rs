@@ -7,7 +7,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use common::{postgres, postgres_target, sqlite_target};
-use fabio_core::{Agent, AuditLog, Limits, ReadOnlyDb, RelationRef, SavedConnection, Source, Store, Target};
+use std::collections::HashMap;
+use std::sync::Mutex;
+
+use fabio_core::{Agent, AuditLog, Keychain, Limits, ReadOnlyDb, RelationRef, SavedConnection, Source, Store, Target};
 
 fn limits() -> Limits {
     Limits { max_rows: 500, timeout: Duration::from_secs(1) }
@@ -206,7 +209,26 @@ async fn sqlite_agent_rows_are_capped() {
 
 // --- Allowlist and audit ----------------------------------------------------
 
+/// Passwords in memory, shared with the test so it can look inside.
+#[derive(Default, Clone)]
+struct FakeKeychain(Arc<Mutex<HashMap<String, String>>>);
+
+impl Keychain for FakeKeychain {
+    fn get(&self, id: &str) -> fabio_core::Result<Option<String>> {
+        Ok(self.0.lock().unwrap().get(id).cloned())
+    }
+    fn set(&self, id: &str, password: &str) -> fabio_core::Result<()> {
+        self.0.lock().unwrap().insert(id.into(), password.into());
+        Ok(())
+    }
+}
+
 fn agent_with(connections: &[(&str, bool, Target)]) -> (Agent, Arc<AuditLog>) {
+    let (agent, audit, _, _) = agent_with_store(connections);
+    (agent, audit)
+}
+
+fn agent_with_store(connections: &[(&str, bool, Target)]) -> (Agent, Arc<AuditLog>, FakeKeychain, std::path::PathBuf) {
     let dir = std::env::temp_dir().join(format!("fabio-agent-store-{}-{:x}", std::process::id(), rand()));
     let store = Store::new(dir.join("connections.json"));
     for (name, agent, target) in connections {
@@ -221,7 +243,9 @@ fn agent_with(connections: &[(&str, bool, Target)]) -> (Agent, Arc<AuditLog>) {
             .unwrap();
     }
     let audit = Arc::new(AuditLog::open(":memory:").unwrap());
-    (Agent::new(store, audit.clone(), limits(), Box::new(|_| Ok(None))), audit)
+    let keychain = FakeKeychain::default();
+    let agent = Agent::new(store, audit.clone(), limits(), Box::new(keychain.clone()));
+    (agent, audit, keychain, dir.join("connections.json"))
 }
 
 /// Unique within this test run (clock nanos can repeat across threads).
@@ -256,4 +280,45 @@ async fn agent_statements_are_audited() {
     assert!(log.iter().all(|e| e.source == Source::Agent));
     assert_eq!(log[2].rows, Some(1));
     assert!(log[1].error.as_deref().unwrap().contains("nme"));
+}
+
+#[tokio::test]
+async fn agent_creates_a_connection_it_can_then_use() {
+    let (agent, audit, keychain, file) = agent_with_store(&[]);
+
+    let created =
+        agent.create_connection("local chinook", "postgres://fabio:s3cret@localhost:54329/chinook").await.unwrap();
+
+    assert_eq!(created.engine, "postgres");
+    let listed: Vec<_> = agent.connections().unwrap().into_iter().map(|c| c.name).collect();
+    assert_eq!(listed, ["local chinook"]);
+    assert_eq!(keychain.0.lock().unwrap().get(&created.id).map(String::as_str), Some("s3cret"));
+    assert!(!std::fs::read_to_string(&file).unwrap().contains("s3cret"));
+    assert!(std::fs::read_to_string(&file).unwrap().contains("Added by agents"));
+    agent.query("local chinook", "select 1").await.unwrap();
+    // The panel shows the addition as well as the query.
+    let log = audit.recent(Some(&created.id), 10).unwrap();
+    assert_eq!(log.len(), 2);
+    assert!(log[1].sql.starts_with("-- Agent added connection “local chinook”"), "{}", log[1].sql);
+    assert!(!log[1].sql.contains("s3cret"));
+}
+
+#[tokio::test]
+async fn agent_connection_that_cannot_connect_is_not_saved() {
+    let (agent, _, _, _) = agent_with_store(&[]);
+    let err = agent.create_connection("nowhere", "postgres://fabio@localhost:1/chinook").await.unwrap_err();
+    assert!(!err.to_string().is_empty());
+    assert!(agent.connections().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn agent_creates_a_sqlite_connection_from_a_path() {
+    let (agent, _, _, _) = agent_with_store(&[]);
+    let Target::Sqlite { path } = sqlite_target() else { unreachable!() };
+
+    let created = agent.create_connection("music", &path.display().to_string()).await.unwrap();
+
+    assert_eq!(created.engine, "sqlite");
+    assert_eq!(agent.query("music", "select count(*) from Genre").await.unwrap().rows, [[Some("25".to_string())]]);
+    assert!(agent.create_connection("gone", "/no/such/file.sqlite").await.is_err());
 }

@@ -23,7 +23,12 @@ export function AgentView({ entries, onOpen }: Props) {
   return (
     <div className="agent-log">
       {entries.map((e) => (
-        <div key={e.id} className={`agent-entry ${e.error ? "failed" : ""}`} onClick={() => onOpen(e)} title="Open in a query tab and run it again">
+        <div
+          key={e.id}
+          className={`agent-entry ${e.error ? "failed" : ""} ${isNote(e) ? "note" : ""}`}
+          onClick={() => !isNote(e) && onOpen(e)}
+          title={isNote(e) ? undefined : "Open in a query tab and run it again"}
+        >
           <span className="agent-time">{new Date(e.at_ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
           <div className="agent-body">
             <div className="agent-sql">{e.sql}</div>
@@ -42,7 +47,11 @@ export function explainMode(sql: string): { mode: "run" | "explain" | "analyze";
   return { mode: "run", sql };
 }
 
+/** Things the agent did that aren't statements, like adding a connection. */
+const isNote = (e: AuditEntry) => e.sql.startsWith("-- ");
+
 function outcome(e: AuditEntry) {
+  if (isNote(e)) return "connection saved";
   if (explainMode(e.sql).mode !== "run") return "plan";
   return `${(e.rows ?? 0).toLocaleString()} ${e.rows === 1 ? "row" : "rows"}`;
 }

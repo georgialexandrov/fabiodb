@@ -13,7 +13,7 @@ mod tools;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use fabio_core::{Agent, AuditLog, Limits, Store};
+use fabio_core::{Agent, AuditLog, Keychain, Limits, Store};
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::Mutex;
@@ -27,6 +27,8 @@ const INSTRUCTIONS: &str = "Fabio gives read-only access to the databases its us
 (Postgres and SQLite). Start with list_connections, then list_tables and describe_table. \
 Each call runs one statement; results are capped at 500 rows and statements stop after 10 s. \
 To find out why a query is slow, use explain: it returns Fabio's findings and the plan. \
+To add a database the user points you to, use find_databases on their project folder \
+or create_connection with a URL; both show up in Fabio. \
 The user sees every statement you run in Fabio's agent panel.";
 
 #[tokio::main]
@@ -49,7 +51,7 @@ async fn main() {
         Store::new(config.join("connections.json")),
         audit,
         Limits::default(),
-        Box::new(keychain_password),
+        Box::new(OsKeychain),
     ));
 
     let stdout = Arc::new(Mutex::new(tokio::io::stdout()));
@@ -110,18 +112,29 @@ fn error(id: Value, code: i64, message: &str) -> Value {
     json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}})
 }
 
-/// No keychain (a Linux box without a secret service) is the same as no saved
-/// password: connections that need none still work, and the others fail with
-/// the server's own authentication error.
-fn keychain_password(id: &str) -> fabio_core::Result<Option<String>> {
-    let found = keyring::Entry::new(KEYCHAIN_SERVICE, id).and_then(|entry| entry.get_password());
-    match found {
-        Ok(p) => Ok(Some(p)),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => {
-            eprintln!("fabio-mcp: keychain unavailable, connecting without a password: {e}");
-            Ok(None)
+/// The app's keychain entries: service `dev.fabio.app`, account = connection id.
+struct OsKeychain;
+
+impl Keychain for OsKeychain {
+    /// No keychain (a Linux box without a secret service) is the same as no
+    /// saved password: connections that need none still work, and the others
+    /// fail with the server's own authentication error.
+    fn get(&self, id: &str) -> fabio_core::Result<Option<String>> {
+        let found = keyring::Entry::new(KEYCHAIN_SERVICE, id).and_then(|entry| entry.get_password());
+        match found {
+            Ok(p) => Ok(Some(p)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(e) => {
+                eprintln!("fabio-mcp: keychain unavailable, connecting without a password: {e}");
+                Ok(None)
+            }
         }
+    }
+
+    fn set(&self, id: &str, password: &str) -> fabio_core::Result<()> {
+        keyring::Entry::new(KEYCHAIN_SERVICE, id)
+            .and_then(|entry| entry.set_password(password))
+            .map_err(|e| fabio_core::Error::Invalid(format!("keychain: {e}")))
     }
 }
 

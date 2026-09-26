@@ -151,21 +151,83 @@ pub struct AgentConnection {
     pub engine: &'static str,
 }
 
-/// Looks up a saved connection's password (the OS keychain, in practice).
-pub type Passwords = Box<dyn Fn(&str) -> Result<Option<String>> + Send + Sync>;
+/// Where saved connections' passwords live (the OS keychain, in practice),
+/// keyed by connection id.
+pub trait Keychain: Send + Sync {
+    fn get(&self, id: &str) -> Result<Option<String>>;
+    fn set(&self, id: &str, password: &str) -> Result<()>;
+}
+
+/// Group for connections an agent added, so they're easy to find and review.
+pub const AGENT_GROUP: &str = "Added by agents";
 
 /// Everything the MCP server's tools do, over the saved connections.
 pub struct Agent {
     store: Store,
     audit: Arc<AuditLog>,
     limits: Limits,
-    passwords: Passwords,
+    keychain: Box<dyn Keychain>,
     open: Mutex<HashMap<String, Arc<ReadOnlyDb>>>,
 }
 
 impl Agent {
-    pub fn new(store: Store, audit: Arc<AuditLog>, limits: Limits, passwords: Passwords) -> Agent {
-        Agent { store, audit, limits, passwords, open: Mutex::default() }
+    pub fn new(store: Store, audit: Arc<AuditLog>, limits: Limits, keychain: Box<dyn Keychain>) -> Agent {
+        Agent { store, audit, limits, keychain, open: Mutex::default() }
+    }
+
+    /// Saves a new connection from a `postgres://` URL or a SQLite file path,
+    /// after checking it connects. It's open to agents (the agent supplied the
+    /// credentials, so it could reach the database anyway), grouped under
+    /// [`AGENT_GROUP`], and the addition shows in the agent panel.
+    pub async fn create_connection(&self, name: &str, url_or_path: &str) -> Result<AgentConnection> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(Error::Invalid("A connection needs a name.".into()));
+        }
+        let target = if url_or_path.starts_with("postgres://") || url_or_path.starts_with("postgresql://") {
+            Target::Postgres(crate::PgTarget::from_url(url_or_path)?)
+        } else {
+            Target::Sqlite { path: url_or_path.into() }
+        };
+        // Nothing half-working gets saved.
+        let db = ReadOnlyDb::open(&target, self.limits).await?;
+        db.query("SELECT 1").await?;
+
+        let password = match &target {
+            Target::Postgres(pg) => pg.password.clone(),
+            Target::Sqlite { .. } => None,
+        };
+        let described = match &target {
+            Target::Postgres(pg) => format!("{}@{}:{}/{} (Postgres)", pg.user, pg.host, pg.port, pg.database),
+            Target::Sqlite { path } => format!("{} (SQLite)", path.display()),
+        };
+        let saved = self.store.save(SavedConnection {
+            id: String::new(),
+            name: name.to_owned(),
+            target,
+            agent: true,
+            group: Some(AGENT_GROUP.into()),
+        })?;
+        if let Some(password) = password {
+            self.keychain.set(&saved.id, &password)?;
+        }
+        self.open.lock().expect("agent connections poisoned").insert(saved.id.clone(), Arc::new(db));
+        let entry = NewAuditEntry {
+            connection_id: saved.id.clone(),
+            source: Source::Agent,
+            sql: format!("-- Agent added connection “{name}”: {described}"),
+            elapsed_ms: 0.0,
+            rows: None,
+            error: None,
+        };
+        if let Err(e) = self.audit.record(&entry) {
+            eprintln!("audit log: {e}");
+        }
+        Ok(AgentConnection {
+            id: saved.id,
+            name: saved.name,
+            engine: if matches!(saved.target, Target::Postgres(_)) { "postgres" } else { "sqlite" },
+        })
     }
 
     /// Connections marked for agents. Read fresh each time, so unticking one
@@ -261,7 +323,7 @@ impl Agent {
         }
         let mut target = saved.target;
         if let Target::Postgres(pg) = &mut target {
-            pg.password = (self.passwords)(&saved.id)?;
+            pg.password = self.keychain.get(&saved.id)?;
         }
         let db = Arc::new(ReadOnlyDb::open(&target, self.limits).await?);
         self.open.lock().expect("agent connections poisoned").insert(saved.id.clone(), db.clone());

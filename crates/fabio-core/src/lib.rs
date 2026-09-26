@@ -25,7 +25,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-pub use agent::{Agent, AgentConnection, Limits, Passwords, ReadOnlyDb};
+pub use agent::{AGENT_GROUP, Agent, AgentConnection, Keychain, Limits, ReadOnlyDb};
 pub use audit::{AuditEntry, AuditLog, NewAuditEntry, Source};
 pub use discover::{Discovered, Discovery, discover};
 pub use edit::{CellChange, ColumnValue, RowUpdate};
