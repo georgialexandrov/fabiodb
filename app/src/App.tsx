@@ -17,6 +17,7 @@ import {
   type Relation,
   type RelationRef,
   type SavedConnection,
+  type Snippet,
 } from "./api";
 
 const SQLITE_EXTENSIONS = /\.(db|sqlite|sqlite3|db3)$/i;
@@ -49,6 +50,12 @@ export default function App() {
   const lastAgentId = useRef(0);
   const [theme, setTheme] = useState<Theme>(savedTheme);
   const [palette, setPalette] = useState(false);
+  const [snippets, setSnippets] = useState<Snippet[]>([]);
+
+  // Snippets are saved from query tabs; read them fresh whenever ⌘K opens.
+  useEffect(() => {
+    if (palette) api.listSnippets().then(setSnippets, () => {});
+  }, [palette]);
 
   useEffect(() => applyTheme(theme), [theme]);
 
@@ -237,6 +244,14 @@ export default function App() {
     ...(["system", "light", "dark"] as Theme[])
       .filter((t) => t !== theme)
       .map((t) => ({ id: `theme-${t}`, label: `Theme: ${THEME_LABELS[t]}`, shortcut: "⇧⌘L", run: () => setTheme(t) })),
+    ...(active
+      ? snippets.map((sn) => ({
+          id: `snippet-${sn.id}`,
+          label: sn.name,
+          hint: "snippet",
+          run: () => newQuery(active.id, sn.sql),
+        }))
+      : []),
     ...connections
       .filter((c) => c.id !== activeId)
       .map((c) => ({

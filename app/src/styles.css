@@ -327,3 +327,7 @@ button:disabled { opacity: 0.4; }
 .palette-hint { font-size: 12px; }
 .palette kbd { font: 11px var(--mono); color: var(--muted); }
 .palette .hint { padding: 8px 12px; margin: 0; }
+.history-switch { display: inline-flex; margin: 8px 12px; }
+.history-switch button { padding: 2px 10px; font-size: 12px; }
+.snippet-head { display: flex; align-items: center; gap: 6px; }
+.snippet-name { font-weight: 600; flex: 1; }

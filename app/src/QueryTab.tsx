@@ -11,6 +11,7 @@ import {
   type Plan,
   type QueryError,
   type QueryResult,
+  type Snippet,
 } from "./api";
 import { PlanView } from "./PlanView";
 import { splitStatements, statementAt, type Statement } from "./statements";
@@ -43,6 +44,10 @@ export function QueryTab({ connectionId, engine, schema, sql, onSqlChange, visib
   const [view, setView] = useState<"results" | "plan">("results");
   const [history, setHistory] = useState<AuditEntry[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
+  const [panel, setPanel] = useState<"history" | "snippets">("history");
+  const [snippets, setSnippets] = useState<Snippet[]>([]);
+  // Naming a snippet: the statement to save and the name typed so far.
+  const [naming, setNaming] = useState<{ sql: string; name: string } | null>(null);
   const cancelled = useRef(false);
 
   // Each query tab has its own connection: its own session, transaction and write mode.
@@ -69,9 +74,24 @@ export function QueryTab({ connectionId, engine, schema, sql, onSqlChange, visib
   }, [session]);
 
   const refreshHistory = () => api.history(connectionId, 200).then(setHistory, () => {});
+  const refreshSnippets = () => api.listSnippets().then(setSnippets, () => {});
   useEffect(() => {
-    if (showHistory) refreshHistory();
-  }, [showHistory]);
+    if (showHistory) (panel === "history" ? refreshHistory : refreshSnippets)();
+  }, [showHistory, panel]);
+
+  async function saveSnippet() {
+    if (!naming) return;
+    const name = naming.name.trim();
+    const existing = snippets.find((s) => s.name.toLowerCase() === name.toLowerCase());
+    try {
+      await api.saveSnippet({ id: existing?.id ?? "", name, sql: naming.sql });
+      setNaming(null);
+      setNotice(`${existing ? "Replaced" : "Saved"} snippet “${name}” · ⌘K finds it`);
+      refreshSnippets();
+    } catch (e) {
+      setNotice(String(e));
+    }
+  }
 
   /** The selection, or the statement under the cursor. */
   function target(at: EditorSnapshot): Statement | undefined {
@@ -189,10 +209,15 @@ export function QueryTab({ connectionId, engine, schema, sql, onSqlChange, visib
         e.preventDefault();
         setShowHistory((s) => !s);
       }
+      if ((e.metaKey || e.ctrlKey) && e.key === "s" && sql.trim()) {
+        e.preventDefault();
+        refreshSnippets();
+        setNaming({ sql: sql.trim(), name: "" });
+      }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [visible, running, session]);
+  }, [visible, running, session, sql]);
 
   // Postgres positions are 1-based characters into the statement; underline the word there.
   let errorRange: { from: number; to: number } | null = null;
@@ -297,19 +322,85 @@ export function QueryTab({ connectionId, engine, schema, sql, onSqlChange, visib
 
         {showHistory && (
           <aside className="history">
-            {history.length === 0 && <p className="hint">Statements you run here show up in this list.</p>}
-            {history.map((h) => (
-              <div key={h.id} className={`history-item ${h.error ? "failed" : ""}`} onClick={() => onSqlChange(h.sql)} title={h.error ?? h.sql}>
-                <div className="history-sql">{h.sql}</div>
-                <div className="history-meta">
-                  {timeAgo(h.at_ms)} · {h.error ? "failed" : `${h.rows ?? 0} rows`} · {h.elapsed_ms.toFixed(0)} ms
-                  {h.source === "agent" && " · agent"}
+            <div className="segmented history-switch">
+              <button className={panel === "history" ? "on" : ""} onClick={() => setPanel("history")}>
+                History
+              </button>
+              <button className={panel === "snippets" ? "on" : ""} onClick={() => setPanel("snippets")}>
+                Snippets
+              </button>
+            </div>
+            {panel === "history" && history.length === 0 && <p className="hint">Statements you run here show up in this list.</p>}
+            {panel === "history" &&
+              history.map((h) => (
+                <div key={h.id} className={`history-item ${h.error ? "failed" : ""}`} onClick={() => onSqlChange(h.sql)} title={h.error ?? h.sql}>
+                  <div className="history-sql">{h.sql}</div>
+                  <div className="history-meta">
+                    {timeAgo(h.at_ms)} · {h.error ? "failed" : `${h.rows ?? 0} rows`} · {h.elapsed_ms.toFixed(0)} ms
+                    {h.source === "agent" && " · agent"}
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))}
+            {panel === "snippets" && snippets.length === 0 && <p className="hint">⌘S saves the editor’s text as a snippet.</p>}
+            {panel === "snippets" &&
+              snippets.map((sn) => (
+                <div key={sn.id} className="history-item" onClick={() => onSqlChange(sn.sql)} title={sn.sql}>
+                  <div className="snippet-head">
+                    <span className="snippet-name ellipsis">{sn.name}</span>
+                    <button
+                      className="ghost"
+                      title="Delete snippet"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        api.deleteSnippet(sn.id).then(refreshSnippets);
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  <div className="history-sql">{sn.sql}</div>
+                </div>
+              ))}
           </aside>
         )}
       </div>
+
+      {naming && (
+        <div className="modal-backdrop" onMouseDown={() => setNaming(null)}>
+          <form
+            className="modal"
+            onMouseDown={(e) => e.stopPropagation()}
+            onSubmit={(e) => {
+              e.preventDefault();
+              saveSnippet();
+            }}
+          >
+            <h2>Save as snippet</h2>
+            <label>
+              Name
+              <input
+                autoFocus
+                value={naming.name}
+                onChange={(e) => setNaming({ ...naming, name: e.target.value })}
+                onKeyDown={(e) => e.key === "Escape" && setNaming(null)}
+              />
+            </label>
+            {snippets.some((s) => s.name.toLowerCase() === naming.name.trim().toLowerCase()) && (
+              <p className="muted">Replaces the snippet with this name.</p>
+            )}
+            <pre className="sql-preview">{naming.sql}</pre>
+            <div className="actions">
+              <span className="grow" />
+              <button type="button" onClick={() => setNaming(null)}>
+                Cancel
+              </button>
+              <button type="submit" className="primary" disabled={!naming.name.trim()}>
+                Save
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       <footer className="status">
         {!session
@@ -322,7 +413,7 @@ export function QueryTab({ connectionId, engine, schema, sql, onSqlChange, visib
                 ? notice
                 : ran
                 ? `${ran.count > 1 ? `${ran.count} statements · ` : ""}${result?.rows.length.toLocaleString() ?? 0} rows · ${ran.ms.toFixed(1)} ms`
-                : "⌘↵ run statement · ⇧⌘↵ run all · ⌘E explain · ⌥⇧F format · ⌘Y history"}
+                : "⌘↵ run statement · ⇧⌘↵ run all · ⌘E explain · ⌥⇧F format · ⌘Y history · ⌘S save snippet"}
       </footer>
     </div>
   );

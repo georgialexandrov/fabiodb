@@ -115,6 +115,8 @@ export type Insights = {
   }[];
 };
 
+export type Snippet = { id: string; name: string; sql: string };
+
 export type ColumnValue = { column: string; value: string | null };
 
 /** `old` is what the grid showed; the save only applies if the row still has it. */
@@ -178,6 +180,9 @@ export const api = {
   runStatement: (id: string, sql: string) => invoke<QueryResult>("run_statement", { id, sql }),
   explain: (id: string, sql: string, analyze: boolean) => invoke<Plan>("explain", { id, sql, analyze }),
   insights: (id: string) => invoke<Insights>("insights", { id }),
+  listSnippets: () => invoke<Snippet[]>("list_snippets"),
+  saveSnippet: (snippet: Snippet) => invoke<Snippet>("save_snippet", { snippet }),
+  deleteSnippet: (id: string) => invoke<void>("delete_snippet", { id }),
   history: (connectionId: string, limit: number) => invoke<AuditEntry[]>("history", { connectionId, limit }),
   agentActivity: (after: number) => invoke<AuditEntry[]>("agent_activity", { after }),
 };

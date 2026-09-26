@@ -1,5 +1,5 @@
-//! Saved connections, as a JSON file. Passwords never touch this file; the app
-//! keeps them in the OS keychain under the connection id.
+//! Saved connections and snippets, as JSON files. Passwords never touch these
+//! files; the app keeps them in the OS keychain under the connection id.
 
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -30,13 +30,7 @@ impl Store {
     }
 
     pub fn list(&self) -> Result<Vec<SavedConnection>> {
-        match std::fs::read(&self.path) {
-            Ok(bytes) => {
-                serde_json::from_slice(&bytes).map_err(|e| Error::Invalid(format!("{}: {e}", self.path.display())))
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(vec![]),
-            Err(e) => Err(Error::Invalid(e.to_string())),
-        }
+        read_list(&self.path)
     }
 
     pub fn get(&self, id: &str) -> Result<SavedConnection> {
@@ -56,14 +50,14 @@ impl Store {
             Some(existing) => *existing = connection.clone(),
             None => all.push(connection.clone()),
         }
-        self.write(&all)?;
+        write_list(&self.path, &all)?;
         Ok(connection)
     }
 
     pub fn remove(&self, id: &str) -> Result<()> {
         let mut all = self.list()?;
         all.retain(|c| c.id != id);
-        self.write(&all)
+        write_list(&self.path, &all)
     }
 
     /// The saved connection for a SQLite file, created on first open.
@@ -82,18 +76,77 @@ impl Store {
             }),
         }
     }
+}
 
-    fn write(&self, all: &[SavedConnection]) -> Result<()> {
-        let io = |e: std::io::Error| Error::Invalid(format!("{}: {e}", self.path.display()));
-        if let Some(dir) = self.path.parent() {
-            std::fs::create_dir_all(dir).map_err(io)?;
-        }
-        let json = serde_json::to_vec_pretty(all).map_err(|e| Error::Invalid(e.to_string()))?;
-        // Write-then-rename so a crash never leaves a half-written file.
-        let tmp = self.path.with_extension("json.tmp");
-        std::fs::write(&tmp, json).map_err(io)?;
-        std::fs::rename(&tmp, &self.path).map_err(io)
+/// A saved SQL statement, reachable from ⌘K.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Snippet {
+    /// Empty for one that hasn't been saved yet.
+    #[serde(default)]
+    pub id: String,
+    pub name: String,
+    pub sql: String,
+}
+
+pub struct Snippets {
+    path: PathBuf,
+}
+
+impl Snippets {
+    pub fn new(path: impl Into<PathBuf>) -> Snippets {
+        Snippets { path: path.into() }
     }
+
+    /// By name, case-insensitively.
+    pub fn list(&self) -> Result<Vec<Snippet>> {
+        let mut all: Vec<Snippet> = read_list(&self.path)?;
+        all.sort_by_key(|s| s.name.to_lowercase());
+        Ok(all)
+    }
+
+    /// Inserts or replaces by id, assigning one if empty.
+    pub fn save(&self, mut snippet: Snippet) -> Result<Snippet> {
+        snippet.name = snippet.name.trim().to_owned();
+        if snippet.name.is_empty() {
+            return Err(Error::Invalid("A snippet needs a name.".into()));
+        }
+        if snippet.id.is_empty() {
+            snippet.id = new_id();
+        }
+        let mut all: Vec<Snippet> = read_list(&self.path)?;
+        match all.iter_mut().find(|s| s.id == snippet.id) {
+            Some(existing) => *existing = snippet.clone(),
+            None => all.push(snippet.clone()),
+        }
+        write_list(&self.path, &all)?;
+        Ok(snippet)
+    }
+
+    pub fn remove(&self, id: &str) -> Result<()> {
+        let mut all: Vec<Snippet> = read_list(&self.path)?;
+        all.retain(|s| s.id != id);
+        write_list(&self.path, &all)
+    }
+}
+
+fn read_list<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Vec<T>> {
+    match std::fs::read(path) {
+        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| Error::Invalid(format!("{}: {e}", path.display()))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(vec![]),
+        Err(e) => Err(Error::Invalid(e.to_string())),
+    }
+}
+
+fn write_list<T: Serialize>(path: &Path, all: &[T]) -> Result<()> {
+    let io = |e: std::io::Error| Error::Invalid(format!("{}: {e}", path.display()));
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(io)?;
+    }
+    let json = serde_json::to_vec_pretty(all).map_err(|e| Error::Invalid(e.to_string()))?;
+    // Write-then-rename so a crash never leaves a half-written file.
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, json).map_err(io)?;
+    std::fs::rename(&tmp, path).map_err(io)
 }
 
 fn new_id() -> String {

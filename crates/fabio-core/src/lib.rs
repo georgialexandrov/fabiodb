@@ -31,7 +31,7 @@ pub use export::{ExportFormat, RowWriter, format_rows};
 pub use insights::{Activity, Insights, SeqScanTable, TopStatement, UnusedIndex};
 pub use plan::{Detail, Finding, Plan, PlanNode, Severity};
 pub use postgres::{PgTarget, SslMode};
-pub use store::{SavedConnection, Store};
+pub use store::{SavedConnection, Snippet, Snippets, Store};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "engine", rename_all = "lowercase")]

@@ -5,8 +5,8 @@ use std::time::{Duration, Instant};
 
 use fabio_core::{
     AuditEntry, AuditLog, CompletionTable, Count, Db, ExportFormat, Filter, Insights, NewAuditEntry, Page, PageRequest,
-    PgTarget, Plan, QueryResult, Relation, RelationRef, ResultColumn, RowUpdate, Rows, SavedConnection, Sort, Source,
-    Store, TableInfo, Target, format_rows,
+    PgTarget, Plan, QueryResult, Relation, RelationRef, ResultColumn, RowUpdate, Rows, SavedConnection, Snippet,
+    Snippets, Sort, Source, Store, TableInfo, Target, format_rows,
 };
 use serde::Serialize;
 use tauri::{Manager, State};
@@ -16,6 +16,7 @@ const KEYCHAIN_SERVICE: &str = "dev.fabio.app";
 
 struct App {
     store: Store,
+    snippets: Snippets,
     audit: AuditLog,
     /// One read-only connection per saved connection, for browsing.
     open: Mutex<HashMap<String, Arc<Db>>>,
@@ -326,6 +327,21 @@ async fn insights(app: State<'_, App>, id: String) -> Res<Insights> {
 }
 
 #[tauri::command]
+fn list_snippets(app: State<App>) -> Res<Vec<Snippet>> {
+    app.snippets.list().map_err(err)
+}
+
+#[tauri::command]
+fn save_snippet(app: State<App>, snippet: Snippet) -> Res<Snippet> {
+    app.snippets.save(snippet).map_err(err)
+}
+
+#[tauri::command]
+fn delete_snippet(app: State<App>, id: String) -> Res<()> {
+    app.snippets.remove(&id).map_err(err)
+}
+
+#[tauri::command]
 fn history(app: State<App>, connection_id: String, limit: u32) -> Res<Vec<AuditEntry>> {
     app.audit.recent(Some(&connection_id), limit).map_err(err)
 }
@@ -360,6 +376,7 @@ pub fn run() {
             std::fs::create_dir_all(&data)?;
             app.manage(App {
                 store: Store::new(config.join("connections.json")),
+                snippets: Snippets::new(config.join("snippets.json")),
                 audit: AuditLog::open(data.join("audit.sqlite"))?,
                 open: Mutex::default(),
                 sessions: Mutex::default(),
@@ -394,6 +411,9 @@ pub fn run() {
             explain,
             insights,
             history,
+            list_snippets,
+            save_snippet,
+            delete_snippet,
             agent_activity,
             app_ready,
         ])
