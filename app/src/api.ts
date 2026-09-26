@@ -163,6 +163,7 @@ export const api = {
   openSqliteFile: (path: string) => invoke<SavedConnection>("open_sqlite_file", { path }),
   connect: (id: string) => invoke<Relation[]>("connect", { id }),
   disconnect: (id: string) => invoke<void>("disconnect", { id }),
+  databases: (id: string) => invoke<string[]>("databases", { id }),
   relations: (id: string) => invoke<Relation[]>("relations", { id }),
   describe: (id: string, relation: RelationRef) => invoke<TableInfo>("describe", { id, relation }),
   count: (id: string, relation: RelationRef, filters: Filter[]) => invoke<Count>("count", { id, relation, filters }),
@@ -204,6 +205,20 @@ export const api = {
 export const fileName = (path: string) => path.split(/[\\/]/).pop() ?? path;
 
 export const plural = (n: number, word: string) => `${n.toLocaleString()} ${n === 1 ? word : `${word}s`}`;
+
+/**
+ * A workspace is a saved connection, or `id#database` for another database on
+ * the same server (⌘D). Each has its own tables, tabs and sessions.
+ */
+export const baseId = (workspace: string) => workspace.split("#")[0];
+export const workspaceDatabase = (workspace: string) => {
+  const i = workspace.indexOf("#");
+  return i === -1 ? null : workspace.slice(i + 1);
+};
+export const workspaceId = (connection: SavedConnection, database: string | null) =>
+  database && !(connection.target.engine === "postgres" && connection.target.database === database)
+    ? `${connection.id}#${database}`
+    : connection.id;
 
 export const sameRelation = (a: RelationRef | null, b: RelationRef | null) =>
   !!a && !!b && a.schema === b.schema && a.name === b.name;

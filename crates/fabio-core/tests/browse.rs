@@ -320,3 +320,17 @@ async fn completion_schema_lists_every_relation_with_its_columns() {
     assert_eq!(track.columns[..2], ["TrackId", "Name"]);
     assert_eq!(lite.len(), 11);
 }
+
+// --- databases on the server ------------------------------------------------
+
+#[tokio::test]
+async fn postgres_lists_the_databases_it_can_connect_to() {
+    let dbs = postgres().await.databases().await.unwrap();
+    assert!(dbs.contains(&"chinook".to_string()) && dbs.contains(&"postgres".to_string()), "{dbs:?}");
+    assert!(!dbs.iter().any(|d| d.starts_with("template")), "{dbs:?}");
+}
+
+#[tokio::test]
+async fn sqlite_has_just_its_file() {
+    assert_eq!(sqlite().await.databases().await.unwrap(), ["main"]);
+}

@@ -12,6 +12,9 @@ import { TableView } from "./TableView";
 import { applyTheme, nextTheme, savedTheme, THEME_LABELS, type Theme } from "./theme";
 import {
   api,
+  baseId,
+  workspaceDatabase,
+  workspaceId,
   compactCount,
   sameRelation,
   type AuditEntry,
@@ -54,6 +57,8 @@ export default function App() {
   const [theme, setTheme] = useState<Theme>(savedTheme);
   const [palette, setPalette] = useState(false);
   const [switcher, setSwitcher] = useState(false);
+  // ⌘D: the databases on the current server, to switch between.
+  const [databases, setDatabases] = useState<string[] | null>(null);
   const [discovered, setDiscovered] = useState<{ folder: string; discovery: Discovery } | null>(null);
   const [snippets, setSnippets] = useState<Snippet[]>([]);
 
@@ -91,25 +96,36 @@ export default function App() {
     };
   }, []);
 
-  async function activate(connection: SavedConnection) {
+  /** Opens (or returns to) a connection's workspace; `database` picks another one on its server. */
+  async function activate(connection: SavedConnection, database: string | null = null) {
     setError(null);
     setSwitcher(false);
     markUsed(connection.id);
-    if (relations[connection.id]) {
-      setActiveId(connection.id);
+    const id = workspaceId(connection, database);
+    if (relations[id]) {
+      setActiveId(id);
       return;
     }
     setConnecting(connection.id);
     try {
-      const rels = await api.connect(connection.id);
-      setRelations((r) => ({ ...r, [connection.id]: rels }));
-      setActiveId(connection.id);
+      const rels = await api.connect(id);
+      setRelations((r) => ({ ...r, [id]: rels }));
+      setActiveId(id);
       setSearch("");
-      api.completionSchema(connection.id).then((s) => setSchemas((all) => ({ ...all, [connection.id]: s })), () => {});
+      api.completionSchema(id).then((s) => setSchemas((all) => ({ ...all, [id]: s })), () => {});
     } catch (e) {
-      setError(`${connection.name}: ${e}`);
+      setError(`${connection.name}${database ? ` / ${database}` : ""}: ${e}`);
     } finally {
       setConnecting(null);
+    }
+  }
+
+  async function pickDatabase() {
+    if (!activeId || !active || active.target.engine !== "postgres") return;
+    try {
+      setDatabases(await api.databases(activeId));
+    } catch (e) {
+      setError(String(e));
     }
   }
 
@@ -144,9 +160,9 @@ export default function App() {
   }
 
   async function openAgent(connectionId: string) {
-    const conn = connections.find((c) => c.id === connectionId);
+    const conn = connections.find((c) => c.id === baseId(connectionId));
     if (!conn) return;
-    if (connectionId !== activeId) await activate(conn);
+    if (connectionId !== activeId) await activate(conn, workspaceDatabase(connectionId));
     const existing = tabs.find((t) => t.connectionId === connectionId && t.kind === "agent");
     if (existing) return focusTab(existing);
     const tab: Tab = { id: `t${nextTab++}`, connectionId, kind: "agent" };
@@ -164,10 +180,12 @@ export default function App() {
     setActiveTab((a) => ({ ...a, [tab.connectionId]: a[tab.connectionId] === id ? (next?.id ?? null) : a[tab.connectionId] }));
   }
 
+  /** Drops a connection's workspaces (all its databases), after an edit or delete. */
   function forget(connectionId: string) {
-    setTabs((all) => all.filter((t) => t.connectionId !== connectionId));
-    setRelations(({ [connectionId]: _, ...rest }) => rest);
-    if (connectionId === activeId) setActiveId(null);
+    const mine = (id: string) => baseId(id) === connectionId;
+    setTabs((all) => all.filter((t) => !mine(t.connectionId)));
+    setRelations((r) => Object.fromEntries(Object.entries(r).filter(([id]) => !mine(id))));
+    if (activeId && mine(activeId)) setActiveId(null);
   }
 
   async function openSqlite(path: string) {
@@ -207,7 +225,8 @@ export default function App() {
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (!(e.metaKey || e.ctrlKey)) return;
+      // Keys the editor already used (its ⌘D selects the next match) aren't app shortcuts.
+      if (!(e.metaKey || e.ctrlKey) || e.defaultPrevented) return;
       const key = e.key.toLowerCase();
       if (key === "o") chooseSqlite().catch((err) => setError(String(err)));
       else if (key === "n") setEditing(null);
@@ -215,6 +234,7 @@ export default function App() {
       else if (key === "w" && current) closeTab(current);
       else if (key === "l" && e.shiftKey) setTheme(nextTheme);
       else if (key === "k" && e.shiftKey) setSwitcher((s) => !s);
+      else if (key === "d") pickDatabase();
       else if (key === "k") setPalette((p) => !p);
       else return;
       e.preventDefault();
@@ -247,7 +267,8 @@ export default function App() {
     };
   }, [agentLog, connections]);
 
-  const active = connections.find((c) => c.id === activeId) ?? null;
+  const active = (activeId && connections.find((c) => c.id === baseId(activeId))) || null;
+  const activeDatabase = activeId ? workspaceDatabase(activeId) : null;
 
   const commands: Command[] = [
     ...(active
@@ -256,6 +277,9 @@ export default function App() {
           ...(active.target.engine === "postgres" ? [{ id: "insights", label: "Insights", hint: active.name, run: openInsights }] : []),
           { id: "agent", label: "Agent activity", hint: active.name, run: () => openAgent(active.id) },
           { id: "edit", label: `Edit connection “${active.name}”`, run: () => setEditing(active) },
+          ...(active.target.engine === "postgres"
+            ? [{ id: "databases", label: "Switch database…", hint: active.name, shortcut: "⌘D", run: pickDatabase }]
+            : []),
         ]
       : []),
     ...(current ? [{ id: "close", label: "Close tab", shortcut: "⌘W", run: () => closeTab(current) }] : []),
@@ -322,7 +346,11 @@ export default function App() {
                   <span className={`engine ${active.target.engine}`}>{active.target.engine === "postgres" ? "PG" : "SQ"}</span>
                   <span className="switcher-text">
                     <span className="ellipsis">{connecting ? "Connecting…" : active.name}</span>
-                    <span className="muted ellipsis switcher-sub">{describe(active)}</span>
+                    <span className="muted ellipsis switcher-sub">
+                      {activeDatabase && active.target.engine === "postgres"
+                        ? `${active.target.user}@${active.target.host}:${active.target.port}/${activeDatabase}`
+                        : describe(active)}
+                    </span>
                   </span>
                 </>
               ) : (
@@ -335,9 +363,9 @@ export default function App() {
             <ConnectionSwitcher
               mode="popover"
               connections={connections}
-              openIds={new Set(Object.keys(relations))}
-              activeId={activeId}
-              onPick={activate}
+              openIds={new Set(Object.keys(relations).map(baseId))}
+              activeId={activeId && baseId(activeId)}
+              onPick={(c) => activate(c)}
               onEdit={(c) => (setSwitcher(false), setEditing(c))}
               onNew={() => (setSwitcher(false), setEditing(null))}
               onOpenSqlite={() => (setSwitcher(false), chooseSqlite().catch((e) => setError(String(e))))}
@@ -424,7 +452,7 @@ export default function App() {
 
         {/* Every open tab stays mounted, so switching keeps scroll, filters and results. */}
         {tabs.map((t) => {
-          const conn = connections.find((c) => c.id === t.connectionId);
+          const conn = connections.find((c) => c.id === baseId(t.connectionId));
           const visible = t.id === current && t.connectionId === activeId;
           if (!conn) return null;
           if (t.kind === "insights") {
@@ -438,7 +466,7 @@ export default function App() {
             return (
               <div key={t.id} className="tab-page" style={{ display: visible ? "flex" : "none" }}>
                 <AgentView
-                  entries={agentLog.filter((e) => e.connection_id === t.connectionId)}
+                  entries={agentLog.filter((e) => e.connection_id === baseId(t.connectionId))}
                   onOpen={(e) => {
                     const { mode, sql } = explainMode(e.sql);
                     newQuery(t.connectionId, sql, mode);
@@ -475,9 +503,9 @@ export default function App() {
             <ConnectionSwitcher
               mode="page"
               connections={connections}
-              openIds={new Set(Object.keys(relations))}
-              activeId={activeId}
-              onPick={activate}
+              openIds={new Set(Object.keys(relations).map(baseId))}
+              activeId={null}
+              onPick={(c) => activate(c)}
               onEdit={setEditing}
               onNew={() => setEditing(null)}
               onOpenSqlite={() => chooseSqlite().catch((e) => setError(String(e)))}
@@ -495,6 +523,21 @@ export default function App() {
       </main>
 
       {palette && <CommandPalette commands={commands} onClose={() => setPalette(false)} />}
+      {databases && active && (
+        <CommandPalette
+          placeholder={`Database on ${active.target.engine === "postgres" ? active.target.host : active.name}`}
+          commands={databases.map((d) => {
+            const id = workspaceId(active, d);
+            return {
+              id: `db-${d}`,
+              label: d,
+              hint: id === activeId ? "current" : relations[id] ? "open" : undefined,
+              run: () => activate(active, d),
+            };
+          })}
+          onClose={() => setDatabases(null)}
+        />
+      )}
 
       {discovered && (
         <DiscoverDialog

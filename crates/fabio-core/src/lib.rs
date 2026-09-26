@@ -85,6 +85,27 @@ impl Db {
         }
     }
 
+    /// Databases on the same server this connection could switch to (⌘D).
+    /// A SQLite file is one database.
+    pub async fn databases(&self) -> Result<Vec<String>> {
+        match self {
+            Db::Postgres(pg) => Ok(pg
+                .client()
+                .query(
+                    "SELECT /* fabio */ datname::text FROM pg_database
+                      WHERE datallowconn AND NOT datistemplate
+                        AND has_database_privilege(datname, 'CONNECT')
+                      ORDER BY 1",
+                    &[],
+                )
+                .await?
+                .iter()
+                .map(|r| r.get(0))
+                .collect()),
+            Db::Sqlite(_) => Ok(vec!["main".into()]),
+        }
+    }
+
     pub async fn relations(&self) -> Result<Vec<Relation>> {
         match self {
             Db::Postgres(pg) => pg.relations().await,

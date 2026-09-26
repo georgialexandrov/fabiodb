@@ -77,9 +77,19 @@ impl App {
             .ok_or_else(|| "query tab is closed".to_string())
     }
 
-    async fn open_db(&self, connection_id: &str) -> Res<Db> {
+    /// `id` is a saved connection's id, or `id#database` for another database
+    /// on the same server (⌘D): same host and credentials, its own workspace.
+    async fn open_db(&self, id: &str) -> Res<Db> {
+        let (connection_id, database) = match id.split_once('#') {
+            Some((c, d)) => (c, Some(d)),
+            None => (id, None),
+        };
         let saved = self.store.get(connection_id).map_err(err)?;
-        Db::open(&with_password(saved.target, connection_id, None)?).await.map_err(err)
+        let mut target = with_password(saved.target, connection_id, None)?;
+        if let (Target::Postgres(pg), Some(database)) = (&mut target, database) {
+            pg.database = database.to_owned();
+        }
+        Db::open(&target).await.map_err(err)
     }
 
     fn db(&self, id: &str) -> Res<Arc<Db>> {
@@ -118,7 +128,8 @@ fn save_connection(app: State<App>, connection: SavedConnection, password: Optio
 
 #[tauri::command]
 fn delete_connection(app: State<App>, id: String) -> Res<()> {
-    app.open.lock().unwrap().remove(&id);
+    // With the other databases opened on it (`id#db`).
+    app.open.lock().unwrap().retain(|k, _| k != &id && !k.starts_with(&format!("{id}#")));
     app.store.remove(&id).map_err(err)?;
     match keychain(&id)?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
@@ -161,6 +172,12 @@ async fn connect(app: State<'_, App>, id: String) -> Res<Vec<Relation>> {
 #[tauri::command]
 fn disconnect(app: State<App>, id: String) {
     app.open.lock().unwrap().remove(&id);
+}
+
+/// Databases on the server of an open connection, for ⌘D.
+#[tauri::command]
+async fn databases(app: State<'_, App>, id: String) -> Res<Vec<String>> {
+    app.db(&id)?.databases().await.map_err(err)
 }
 
 #[tauri::command]
@@ -401,6 +418,7 @@ pub fn run() {
             connect,
             disconnect,
             relations,
+            databases,
             describe,
             count,
             page,

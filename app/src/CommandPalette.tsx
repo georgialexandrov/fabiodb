@@ -13,7 +13,8 @@ export type Command = {
 const SHOWN = 60;
 
 /** ⌘K: type to find a table, a connection or an action; ↵ runs it. */
-export function CommandPalette({ commands, onClose }: { commands: Command[]; onClose: () => void }) {
+export function CommandPalette(props: { commands: Command[]; onClose: () => void; placeholder?: string }) {
+  const { commands, onClose, placeholder = "Table, connection or action" } = props;
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
   const list = useRef<HTMLDivElement>(null);
@@ -40,7 +41,7 @@ export function CommandPalette({ commands, onClose }: { commands: Command[]; onC
         <input
           autoFocus
           spellCheck={false}
-          placeholder="Table, connection or action"
+          placeholder={placeholder}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => {
