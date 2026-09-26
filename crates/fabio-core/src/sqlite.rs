@@ -2,26 +2,48 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use rusqlite::{Connection, OpenFlags, params_from_iter, types::ValueRef};
+use rusqlite::{Connection, InterruptHandle, OpenFlags, params_from_iter, types::ValueRef};
 
 use crate::sql::{self, Dialect, quote};
 use crate::{
-    Column, Count, Error, Filter, ForeignKey, Index, Page, PageRequest, QueryResult, Relation, RelationKind,
+    Canceller, Column, CompletionTable, Count, Error, Filter, ForeignKey, Index, Page, PageRequest, QueryResult, Relation, RelationKind,
     RelationRef, Result, ResultColumn, Rows, TableInfo,
 };
 
 /// SQLite calls are blocking, so every call hops to the blocking pool.
 pub struct Lite {
+    path: PathBuf,
     conn: Arc<Mutex<Connection>>,
+    interrupt: Mutex<Arc<InterruptHandle>>,
+}
+
+fn open_file(path: PathBuf, writable: bool) -> rusqlite::Result<Connection> {
+    let mode = if writable { OpenFlags::SQLITE_OPEN_READ_WRITE } else { OpenFlags::SQLITE_OPEN_READ_ONLY };
+    Connection::open_with_flags(path, mode | OpenFlags::SQLITE_OPEN_NO_MUTEX)
 }
 
 impl Lite {
     pub async fn open(path: PathBuf) -> Result<Lite> {
-        let conn = tokio::task::spawn_blocking(move || {
-            Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX)
+        let conn = tokio::task::spawn_blocking({
+            let path = path.clone();
+            move || open_file(path, false)
         })
         .await??;
-        Ok(Lite { conn: Arc::new(Mutex::new(conn)) })
+        let interrupt = Mutex::new(Arc::new(conn.get_interrupt_handle()));
+        Ok(Lite { path, conn: Arc::new(Mutex::new(conn)), interrupt })
+    }
+
+    pub fn canceller(&self) -> Canceller {
+        Canceller::Sqlite(self.interrupt.lock().expect("interrupt handle poisoned").clone())
+    }
+
+    /// Read-only is an open flag in SQLite, so switching reopens the file.
+    pub async fn set_writable(&self, writable: bool) -> Result<()> {
+        let path = self.path.clone();
+        let conn = tokio::task::spawn_blocking(move || open_file(path, writable)).await??;
+        *self.interrupt.lock().expect("interrupt handle poisoned") = Arc::new(conn.get_interrupt_handle());
+        *self.conn.lock().expect("sqlite connection poisoned") = conn;
+        Ok(())
     }
 
     async fn with<T: Send + 'static>(&self, f: impl FnOnce(&Connection) -> Result<T> + Send + 'static) -> Result<T> {
@@ -29,14 +51,14 @@ impl Lite {
         tokio::task::spawn_blocking(move || f(&conn.lock().expect("sqlite connection poisoned"))).await?
     }
 
-    pub async fn query(&self, sql: &str) -> Result<QueryResult> {
+    pub async fn query(&self, sql: &str, max_rows: usize) -> Result<QueryResult> {
         let sql = sql.to_owned();
         self.with(move |conn| {
             let started = Instant::now();
             let mut statement = conn.prepare(&sql)?;
             let columns: Vec<String> = statement.column_names().into_iter().map(str::to_owned).collect();
-            let rows = collect_rows(statement.raw_query(), columns.len())?;
-            Ok(QueryResult { columns, rows, elapsed_ms: ms(started) })
+            let (rows, truncated) = collect_rows(statement.raw_query(), columns.len(), max_rows)?;
+            Ok(QueryResult { columns, rows, truncated, elapsed_ms: ms(started) })
         })
         .await
     }
@@ -67,6 +89,22 @@ impl Lite {
                 relations.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
             }
             Ok(relations)
+        })
+        .await
+    }
+
+    pub async fn completion_schema(&self) -> Result<Vec<CompletionTable>> {
+        let relations = self.relations().await?;
+        self.with(move |conn| {
+            let mut tables = Vec::new();
+            for r in relations {
+                let columns = conn
+                    .prepare("SELECT name FROM pragma_table_info(?1, ?2) ORDER BY cid")?
+                    .query_map([&r.name, &r.schema], |row| row.get(0))?
+                    .collect::<rusqlite::Result<_>>()?;
+                tables.push(CompletionTable { schema: r.schema, name: r.name, columns });
+            }
+            Ok(tables)
         })
         .await
     }
@@ -107,7 +145,7 @@ impl Lite {
             let (sql, params) = sql::page_statement(&DIALECT, &from, &info.columns, &request)?;
 
             let mut statement = conn.prepare(&sql)?;
-            let mut rows = collect_rows(statement.query(params_from_iter(params))?, info.columns.len())?;
+            let (mut rows, _) = collect_rows(statement.query(params_from_iter(params))?, info.columns.len(), usize::MAX)?;
             let has_more = rows.len() > request.limit as usize;
             rows.truncate(request.limit as usize);
 
@@ -194,12 +232,16 @@ const DIALECT: Dialect = Dialect {
     select: |col| quote(&col.name),
 };
 
-fn collect_rows(mut cursor: rusqlite::Rows<'_>, width: usize) -> Result<Rows> {
+/// Up to `max` rows, and whether more were left.
+fn collect_rows(mut cursor: rusqlite::Rows<'_>, width: usize, max: usize) -> Result<(Rows, bool)> {
     let mut rows = Vec::new();
     while let Some(row) = cursor.next()? {
+        if rows.len() == max {
+            return Ok((rows, true));
+        }
         rows.push((0..width).map(|i| row.get_ref(i).map(text)).collect::<rusqlite::Result<_>>()?);
     }
-    Ok(rows)
+    Ok((rows, false))
 }
 
 fn text(value: ValueRef) -> Option<String> {

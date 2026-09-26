@@ -4,6 +4,7 @@
 //! relations, describe one, page its rows. Values come back as text in the
 //! engine's own format; NULL stays `None`.
 
+mod audit;
 mod postgres;
 mod sql;
 mod sqlite;
@@ -14,6 +15,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+pub use audit::{AuditEntry, AuditLog, NewAuditEntry, Source};
 pub use postgres::{PgTarget, SslMode};
 pub use store::{SavedConnection, Store};
 
@@ -38,10 +40,32 @@ impl Db {
         })
     }
 
+    /// Runs `sql`, keeping at most [`DEFAULT_MAX_ROWS`] rows.
     pub async fn query(&self, sql: &str) -> Result<QueryResult> {
+        self.query_limited(sql, DEFAULT_MAX_ROWS).await
+    }
+
+    /// Runs `sql`, keeping at most `max_rows`; the rest is cancelled, not fetched.
+    pub async fn query_limited(&self, sql: &str, max_rows: usize) -> Result<QueryResult> {
         match self {
-            Db::Postgres(pg) => pg.query(sql).await,
-            Db::Sqlite(lite) => lite.query(sql).await,
+            Db::Postgres(pg) => pg.query(sql, max_rows).await,
+            Db::Sqlite(lite) => lite.query(sql, max_rows).await,
+        }
+    }
+
+    /// Something that can stop the statement currently running on this connection.
+    pub fn canceller(&self) -> Canceller {
+        match self {
+            Db::Postgres(pg) => pg.canceller(),
+            Db::Sqlite(lite) => lite.canceller(),
+        }
+    }
+
+    /// Connections start read-only; writes need this, explicitly.
+    pub async fn set_writable(&self, writable: bool) -> Result<()> {
+        match self {
+            Db::Postgres(pg) => pg.set_writable(writable).await,
+            Db::Sqlite(lite) => lite.set_writable(writable).await,
         }
     }
 
@@ -56,6 +80,14 @@ impl Db {
         match self {
             Db::Postgres(pg) => pg.describe(relation).await,
             Db::Sqlite(lite) => lite.describe(relation).await,
+        }
+    }
+
+    /// Every relation with its column names, in one round trip, for autocomplete.
+    pub async fn completion_schema(&self) -> Result<Vec<CompletionTable>> {
+        match self {
+            Db::Postgres(pg) => pg.completion_schema().await,
+            Db::Sqlite(lite) => lite.completion_schema().await,
         }
     }
 
@@ -78,11 +110,33 @@ impl Db {
 
 pub type Rows = Vec<Vec<Option<String>>>;
 
+/// Enough for any grid; stops `select *` on a huge table from filling memory.
+pub const DEFAULT_MAX_ROWS: usize = 10_000;
+
 #[derive(Debug, Clone, Serialize)]
 pub struct QueryResult {
     pub columns: Vec<String>,
     pub rows: Rows,
+    /// More rows existed than were kept.
+    pub truncated: bool,
     pub elapsed_ms: f64,
+}
+
+pub enum Canceller {
+    Postgres(tokio_postgres::CancelToken, postgres_native_tls::MakeTlsConnector),
+    Sqlite(std::sync::Arc<rusqlite::InterruptHandle>),
+}
+
+impl Canceller {
+    pub async fn cancel(&self) -> Result<()> {
+        match self {
+            Canceller::Postgres(token, tls) => Ok(token.cancel_query(tls.clone()).await?),
+            Canceller::Sqlite(handle) => {
+                handle.interrupt();
+                Ok(())
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -100,6 +154,13 @@ pub struct Relation {
     pub kind: RelationKind,
     /// Planner estimate; `None` when the engine has none (never analyzed, SQLite).
     pub estimated_rows: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CompletionTable {
+    pub schema: String,
+    pub name: String,
+    pub columns: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -210,8 +271,12 @@ pub struct Count {
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("{0}")]
-    Postgres(String),
+    #[error("{message}")]
+    Postgres {
+        message: String,
+        /// 1-based character offset into the statement, when the server gives one.
+        position: Option<u32>,
+    },
     #[error("{0}")]
     Sqlite(#[from] rusqlite::Error),
     #[error("{0}")]
@@ -228,8 +293,24 @@ impl From<tokio_postgres::Error> for Error {
     fn from(err: tokio_postgres::Error) -> Self {
         // The Display impl of a server error is just "db error"; the message is inside.
         match err.as_db_error() {
-            Some(db) => Error::Postgres(db.message().to_owned()),
-            None => Error::Postgres(err.to_string()),
+            Some(db) => Error::Postgres {
+                message: db.message().to_owned(),
+                position: match db.position() {
+                    Some(tokio_postgres::error::ErrorPosition::Original(p)) => Some(*p),
+                    _ => None,
+                },
+            },
+            None => Error::Postgres { message: err.to_string(), position: None },
+        }
+    }
+}
+
+impl Error {
+    /// Where in the statement the error is, if known (1-based characters).
+    pub fn position(&self) -> Option<u32> {
+        match self {
+            Error::Postgres { position, .. } => *position,
+            _ => None,
         }
     }
 }

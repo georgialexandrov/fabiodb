@@ -307,3 +307,19 @@ async fn slow_filtered_count_is_unknown() {
 
     assert_eq!((count.rows, count.exact), (None, false));
 }
+
+// --- autocomplete schema --------------------------------------------------
+
+#[tokio::test]
+async fn completion_schema_lists_every_relation_with_its_columns() {
+    let pg = postgres().await.completion_schema().await.unwrap();
+    let track = pg.iter().find(|t| t.schema == "public" && t.name == "track").unwrap();
+    assert_eq!(track.columns[..2], ["track_id", "name"]);
+    assert!(pg.iter().any(|t| t.schema == "perf" && t.name == "big"));
+
+    let lite = sqlite().await.completion_schema().await.unwrap();
+    let track = lite.iter().find(|t| t.name == "Track").unwrap();
+    assert_eq!(track.schema, "main");
+    assert_eq!(track.columns[..2], ["TrackId", "Name"]);
+    assert_eq!(lite.len(), 11);
+}

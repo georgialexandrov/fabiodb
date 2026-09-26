@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+futures-util = "0.3.34"
 iana-time-zone = "0.1.65"
 native-tls = "0.2.18"
 postgres-native-tls = "0.5.3"

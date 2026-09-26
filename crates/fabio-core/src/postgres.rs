@@ -2,11 +2,12 @@ use std::str::FromStr;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
+use futures_util::StreamExt;
 use tokio_postgres::{Client, SimpleQueryMessage, types::ToSql};
 
 use crate::sql::{self, Dialect, quote};
 use crate::{
-    Column, Count, Error, Filter, ForeignKey, Index, Page, PageRequest, QueryResult, Relation, RelationKind,
+    Canceller, Column, CompletionTable, Count, Error, Filter, ForeignKey, Index, Page, PageRequest, QueryResult, Relation, RelationKind,
     RelationRef, Result, ResultColumn, TableInfo,
 };
 
@@ -100,24 +101,45 @@ impl Pg {
         Ok(Pg { client, tls })
     }
 
-    pub async fn query(&self, sql: &str) -> Result<QueryResult> {
+    pub async fn query(&self, sql: &str, max_rows: usize) -> Result<QueryResult> {
         let started = Instant::now();
         // Simple-query protocol returns every value in Postgres' own text format.
         // With several statements, the last result set wins.
-        let (mut columns, mut rows) = (Vec::new(), Vec::new());
-        for message in self.client.simple_query(sql).await? {
-            match message {
+        let stream = self.client.simple_query_raw(sql).await?;
+        futures_util::pin_mut!(stream);
+        let (mut columns, mut rows, mut truncated) = (Vec::new(), Vec::new(), false);
+        while let Some(message) = stream.next().await {
+            match message? {
                 SimpleQueryMessage::RowDescription(description) => {
                     columns = description.iter().map(|c| c.name().to_owned()).collect();
                     rows.clear();
                 }
                 SimpleQueryMessage::Row(row) => {
+                    if rows.len() == max_rows {
+                        truncated = true;
+                        break;
+                    }
                     rows.push((0..row.len()).map(|i| row.get(i).map(str::to_owned)).collect());
                 }
                 _ => {}
             }
         }
-        Ok(QueryResult { columns, rows, elapsed_ms: ms(started) })
+        if truncated {
+            // Stop the server producing rows nobody will read, then drain what's
+            // in flight so the session is idle before the next statement.
+            self.canceller().cancel().await?;
+            while stream.next().await.is_some() {}
+        }
+        Ok(QueryResult { columns, rows, truncated, elapsed_ms: ms(started) })
+    }
+
+    pub fn canceller(&self) -> Canceller {
+        Canceller::Postgres(self.client.cancel_token(), self.tls.clone())
+    }
+
+    pub async fn set_writable(&self, writable: bool) -> Result<()> {
+        let value = if writable { "off" } else { "on" };
+        Ok(self.client.batch_execute(&format!("SET default_transaction_read_only = {value}")).await?)
     }
 
     pub async fn relations(&self) -> Result<Vec<Relation>> {
@@ -149,6 +171,30 @@ impl Pg {
                 },
                 estimated_rows: r.get::<_, Option<i64>>(3).map(|n| n as u64),
             })
+            .collect())
+    }
+
+    pub async fn completion_schema(&self) -> Result<Vec<CompletionTable>> {
+        let rows = self
+            .client
+            .query(
+                "SELECT n.nspname::text, c.relname::text,
+                        array(SELECT a.attname::text FROM pg_attribute a
+                               WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+                               ORDER BY a.attnum)
+                   FROM pg_class c
+                   JOIN pg_namespace n ON n.oid = c.relnamespace
+                  WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
+                    AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+                    AND n.nspname NOT LIKE 'pg\\_toast%'
+                    AND n.nspname NOT LIKE 'pg\\_temp%'
+                  ORDER BY 1, 2",
+                &[],
+            )
+            .await?;
+        Ok(rows
+            .iter()
+            .map(|r| CompletionTable { schema: r.get(0), name: r.get(1), columns: r.get(2) })
             .collect())
     }
 

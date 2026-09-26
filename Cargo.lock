@@ -885,6 +885,7 @@ dependencies = [
 name = "fabio-core"
 version = "0.1.0"
 dependencies = [
+ "futures-util",
  "iana-time-zone",
  "native-tls",
  "postgres-native-tls",
