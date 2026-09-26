@@ -166,3 +166,97 @@ async fn sqlite_applies_and_checks_updates() {
     std::fs::remove_file(copy).unwrap();
     assert_eq!(names, [[s("Rock & Roll")], [s("Jazz")]]);
 }
+
+// --- inserts and deletes ---------------------------------------------------
+
+use fabio_core::Changes;
+
+#[tokio::test]
+async fn postgres_inserts_with_defaults_and_deletes_by_key_in_one_transaction() {
+    let t =
+        Scratch::create("(id serial primary key, name text not null, note text default 'n/a')", "(10, 'old')").await;
+    let changes = Changes {
+        updates: vec![],
+        inserts: vec![vec![cv("name", Some("new"))]],
+        deletes: vec![vec![cv("id", Some("10"))]],
+    };
+
+    let preview = t.db.change_statements(&t.relation, &changes).await.unwrap();
+    let applied = t.db.apply_changes(&t.relation, &changes).await.unwrap();
+
+    let after = t.rows("id").await;
+    let name = t.relation.name.clone();
+    t.drop().await;
+    assert_eq!(
+        preview,
+        [
+            format!(r#"DELETE FROM "perf"."{name}" WHERE "id" = 10;"#),
+            format!(r#"INSERT INTO "perf"."{name}" ("name") VALUES ('new');"#),
+        ]
+    );
+    assert_eq!(applied, 2);
+    assert_eq!(after, [[s("1"), s("new"), s("n/a")]]);
+}
+
+#[tokio::test]
+async fn postgres_a_row_already_gone_undoes_the_whole_save() {
+    let t = Scratch::create("(id int primary key, name text)", "(1, 'a')").await;
+    let changes = Changes {
+        updates: vec![RowUpdate {
+            key: vec![cv("id", Some("1"))],
+            changes: vec![change("name", Some("a"), Some("A"))],
+        }],
+        inserts: vec![vec![cv("id", Some("2")), cv("name", Some("b"))]],
+        deletes: vec![vec![cv("id", Some("99"))]],
+    };
+
+    let err = t.db.apply_changes(&t.relation, &changes).await.unwrap_err();
+
+    let after = t.rows("id").await;
+    t.drop().await;
+    assert!(err.to_string().contains("id = 99"), "{err}");
+    assert_eq!(after, [[s("1"), s("a")]]);
+}
+
+#[tokio::test]
+async fn postgres_insert_with_nothing_set_uses_default_values() {
+    let t = Scratch::create("(id serial primary key, created text default 'now')", "(default, default)").await;
+    let changes = Changes { updates: vec![], inserts: vec![vec![]], deletes: vec![] };
+    let preview = t.db.change_statements(&t.relation, &changes).await.unwrap();
+    t.db.apply_changes(&t.relation, &changes).await.unwrap();
+    let rows = t.rows("id").await.len();
+    t.drop().await;
+    assert!(preview[0].ends_with("DEFAULT VALUES;"), "{preview:?}");
+    assert_eq!(rows, 2);
+}
+
+#[tokio::test]
+async fn sqlite_inserts_and_deletes() {
+    let Target::Sqlite { path } = sqlite_target() else { unreachable!() };
+    let copy = std::env::temp_dir().join(format!("fabio-rows-{}.sqlite", std::process::id()));
+    std::fs::copy(path, &copy).unwrap();
+    let db = Db::open(&Target::Sqlite { path: copy.clone() }).await.unwrap();
+    db.set_writable(true).await.unwrap();
+    let genre = RelationRef { schema: "main".into(), name: "Genre".into() };
+
+    let insert = Changes {
+        updates: vec![],
+        inserts: vec![
+            vec![cv("GenreId", Some("100")), cv("Name", Some("Yodel"))],
+            vec![cv("GenreId", Some("101")), cv("Name", Some("Kazoo"))],
+        ],
+        deletes: vec![],
+    };
+    assert_eq!(db.apply_changes(&genre, &insert).await.unwrap(), 2);
+    let delete = Changes { deletes: vec![vec![cv("GenreId", Some("101"))]], ..Default::default() };
+    assert_eq!(db.apply_changes(&genre, &delete).await.unwrap(), 1);
+    // Still referenced by tracks: the engine's own foreign-key error comes through.
+    let referenced = Changes { deletes: vec![vec![cv("GenreId", Some("25"))]], ..Default::default() };
+    let err = db.apply_changes(&genre, &referenced).await.unwrap_err();
+
+    let rows =
+        db.query("select GenreId, Name from Genre where GenreId in (25, 100, 101) order by 1").await.unwrap().rows;
+    std::fs::remove_file(copy).unwrap();
+    assert!(err.to_string().contains("FOREIGN KEY"), "{err}");
+    assert_eq!(rows, [[s("25"), s("Opera")], [s("100"), s("Yodel")]]);
+}

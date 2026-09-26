@@ -383,3 +383,7 @@ button:disabled { opacity: 0.4; }
 .discover-item input { margin-top: 3px; }
 .discover-note { font-size: 11px; color: var(--accent); margin-top: 2px; white-space: normal; }
 .agent-entry.note { cursor: default; }
+.grid-row.deleted .grid-cell:not(.grid-gutter) { text-decoration: line-through; color: var(--muted); background: var(--accent-soft); }
+.new-row-fields { max-height: 55vh; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+.set-null-field.on { color: var(--accent); }
+.menu kbd { font: 10px var(--mono); color: var(--muted); margin-left: 6px; }

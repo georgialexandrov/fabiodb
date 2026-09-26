@@ -29,9 +29,32 @@ pub struct RowUpdate {
     pub changes: Vec<CellChange>,
 }
 
+/// Everything one save does to a table, in one transaction: updates, then
+/// deletes, then inserts (so a row can be deleted and re-added by key).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Changes {
+    #[serde(default)]
+    pub updates: Vec<RowUpdate>,
+    /// New rows; columns left out take their defaults.
+    #[serde(default)]
+    pub inserts: Vec<Vec<ColumnValue>>,
+    /// Rows to delete, by their whole primary key.
+    #[serde(default)]
+    pub deletes: Vec<Vec<ColumnValue>>,
+}
+
+/// One statement of a save, and what it means if it doesn't touch exactly one row.
+pub(crate) struct Step {
+    pub sql: String,
+    pub params: Vec<Option<String>>,
+    pub if_not_one: Error,
+}
+
 /// How each engine spells the three kinds of condition.
 pub(crate) struct EditDialect {
     pub param: fn(usize) -> String,
+    /// A parameter as a value of the column's type.
+    pub value: fn(&Column, &str) -> String,
     /// `"col" = <param>`, cast to the column's type.
     pub assign: fn(&Column, &str) -> String,
     /// Key match, cast so the primary-key index is used.
@@ -40,7 +63,15 @@ pub(crate) struct EditDialect {
     pub unchanged: fn(&Column, &str) -> String,
 }
 
-pub(crate) fn validate(info: &TableInfo, relation: &RelationRef, updates: &[RowUpdate]) -> Result<()> {
+pub(crate) fn validate_changes(info: &TableInfo, relation: &RelationRef, changes: &Changes) -> Result<()> {
+    for row in &changes.inserts {
+        for v in row {
+            column(&info.columns, &v.column)?;
+        }
+    }
+    if changes.updates.is_empty() && changes.deletes.is_empty() {
+        return Ok(());
+    }
     let mut pk: Vec<&str> = info.columns.iter().filter(|c| c.primary_key).map(|c| c.name.as_str()).collect();
     if pk.is_empty() {
         return Err(Error::Invalid(format!(
@@ -49,7 +80,14 @@ pub(crate) fn validate(info: &TableInfo, relation: &RelationRef, updates: &[RowU
         )));
     }
     pk.sort_unstable();
-    for update in updates {
+    for key in &changes.deletes {
+        let mut names: Vec<&str> = key.iter().map(|k| k.column.as_str()).collect();
+        names.sort_unstable();
+        if names != pk {
+            return Err(Error::Invalid(format!("a delete must name the whole primary key ({})", pk.join(", "))));
+        }
+    }
+    for update in &changes.updates {
         let mut key: Vec<&str> = update.key.iter().map(|k| k.column.as_str()).collect();
         key.sort_unstable();
         if key != pk {
@@ -91,6 +129,79 @@ pub(crate) fn statement(
     Ok((format!("UPDATE {from} SET {} WHERE {}", set.join(", "), conditions.join(" AND ")), params))
 }
 
+/// Every statement of a save, in order.
+pub(crate) fn steps(dialect: &EditDialect, from: &str, info: &TableInfo, changes: &Changes) -> Result<Vec<Step>> {
+    let mut steps = Vec::new();
+    for update in &changes.updates {
+        let (sql, params) = statement(dialect, from, info, update)?;
+        steps.push(Step { sql, params, if_not_one: stale(info, update) });
+    }
+    for key in &changes.deletes {
+        let mut params = Vec::new();
+        let mut conditions = Vec::new();
+        for k in key {
+            params.push(k.value.clone());
+            conditions.push((dialect.key)(column(&info.columns, &k.column)?, &(dialect.param)(params.len())));
+        }
+        let text = key_values(info, key, ", ")?.replace('"', "");
+        steps.push(Step {
+            sql: format!("DELETE FROM {from} WHERE {}", conditions.join(" AND ")),
+            params,
+            if_not_one: Error::Invalid(format!(
+                "The row with {text} is already gone. Nothing was saved; reload to see the table now."
+            )),
+        });
+    }
+    for row in &changes.inserts {
+        let mut params = Vec::new();
+        let mut names = Vec::new();
+        let mut values = Vec::new();
+        for v in row {
+            let col = column(&info.columns, &v.column)?;
+            params.push(v.value.clone());
+            names.push(quote(&col.name));
+            values.push((dialect.value)(col, &(dialect.param)(params.len())));
+        }
+        let sql = if row.is_empty() {
+            format!("INSERT INTO {from} DEFAULT VALUES")
+        } else {
+            format!("INSERT INTO {from} ({}) VALUES ({})", names.join(", "), values.join(", "))
+        };
+        steps.push(Step {
+            sql,
+            params,
+            if_not_one: Error::Invalid("An INSERT added no row. Nothing was saved.".into()),
+        });
+    }
+    Ok(steps)
+}
+
+/// The statements as the user reads them before saving, in the order they run.
+pub(crate) fn display_changes(from: &str, info: &TableInfo, changes: &Changes) -> Result<Vec<String>> {
+    let mut out = Vec::new();
+    for update in &changes.updates {
+        out.push(display(from, info, update)?);
+    }
+    for key in &changes.deletes {
+        out.push(format!("DELETE FROM {from} WHERE {};", key_values(info, key, " AND ")?));
+    }
+    for row in &changes.inserts {
+        if row.is_empty() {
+            out.push(format!("INSERT INTO {from} DEFAULT VALUES;"));
+            continue;
+        }
+        let mut names = Vec::new();
+        let mut values = Vec::new();
+        for v in row {
+            let col = column(&info.columns, &v.column)?;
+            names.push(quote(&col.name));
+            values.push(literal(&col.data_type, v.value.as_deref()));
+        }
+        out.push(format!("INSERT INTO {from} ({}) VALUES ({});", names.join(", "), values.join(", ")));
+    }
+    Ok(out)
+}
+
 /// What the user is shown before saving: literals instead of parameters, and
 /// without the "unchanged" guard, which is how Fabio runs it, not what it does.
 pub(crate) fn display(from: &str, info: &TableInfo, update: &RowUpdate) -> Result<String> {
@@ -104,8 +215,12 @@ pub(crate) fn display(from: &str, info: &TableInfo, update: &RowUpdate) -> Resul
 
 /// `id = 2`, for messages about a row.
 pub(crate) fn key_text(info: &TableInfo, update: &RowUpdate, separator: &str) -> Result<String> {
+    key_values(info, &update.key, separator)
+}
+
+fn key_values(info: &TableInfo, key: &[ColumnValue], separator: &str) -> Result<String> {
     let mut parts = Vec::new();
-    for k in &update.key {
+    for k in key {
         let col = column(&info.columns, &k.column)?;
         parts.push(match &k.value {
             None => format!("{} IS NULL", quote(&col.name)),

@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 pub use agent::{AGENT_GROUP, Agent, AgentConnection, Keychain, Limits, ReadOnlyDb};
 pub use audit::{AuditEntry, AuditLog, NewAuditEntry, Source};
 pub use discover::{Discovered, Discovery, discover};
-pub use edit::{CellChange, ColumnValue, RowUpdate};
+pub use edit::{CellChange, Changes, ColumnValue, RowUpdate};
 pub use export::{ExportFormat, RowWriter, format_rows};
 pub use insights::{Activity, Insights, SeqScanTable, TopStatement, UnusedIndex};
 pub use plan::{Detail, Finding, Plan, PlanNode, Severity};
@@ -182,20 +182,31 @@ impl Db {
 
     /// The UPDATEs `apply_updates` would run, as the user should read them.
     pub async fn update_statements(&self, relation: &RelationRef, updates: &[RowUpdate]) -> Result<Vec<String>> {
-        let info = self.describe(relation).await?;
-        edit::validate(&info, relation, updates)?;
-        let from = format!("{}.{}", sql::quote(&relation.schema), sql::quote(&relation.name));
-        updates.iter().map(|u| edit::display(&from, &info, u)).collect()
+        self.change_statements(relation, &Changes { updates: updates.to_vec(), ..Default::default() }).await
     }
 
-    /// Runs the edits in one transaction. Each must hit exactly its row with
-    /// the values the user saw, or nothing is saved. Needs a writable connection.
+    /// Cell edits only; see [`Db::apply_changes`].
     pub async fn apply_updates(&self, relation: &RelationRef, updates: &[RowUpdate]) -> Result<u64> {
+        self.apply_changes(relation, &Changes { updates: updates.to_vec(), ..Default::default() }).await
+    }
+
+    /// Every statement `apply_changes` would run, in order, as the user reads them.
+    pub async fn change_statements(&self, relation: &RelationRef, changes: &Changes) -> Result<Vec<String>> {
         let info = self.describe(relation).await?;
-        edit::validate(&info, relation, updates)?;
+        edit::validate_changes(&info, relation, changes)?;
+        let from = format!("{}.{}", sql::quote(&relation.schema), sql::quote(&relation.name));
+        edit::display_changes(&from, &info, changes)
+    }
+
+    /// Updates, deletes and inserts in one transaction. Each must touch exactly
+    /// one row (updates: still with the values the user saw), or nothing is
+    /// saved. Needs a writable connection.
+    pub async fn apply_changes(&self, relation: &RelationRef, changes: &Changes) -> Result<u64> {
+        let info = self.describe(relation).await?;
+        edit::validate_changes(&info, relation, changes)?;
         match self {
-            Db::Postgres(pg) => pg.apply_updates(relation, &info, updates).await,
-            Db::Sqlite(lite) => lite.apply_updates(relation, info, updates).await,
+            Db::Postgres(pg) => pg.apply_changes(relation, &info, changes).await,
+            Db::Sqlite(lite) => lite.apply_changes(relation, info, changes).await,
         }
     }
 

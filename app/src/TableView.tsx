@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ColumnFilter, filterText } from "./ColumnFilter";
 import { chooseFile, ExportMenu } from "./ExportMenu";
 import { Grid, type GridEdit } from "./Grid";
+import { NewRow } from "./NewRow";
 import { Structure } from "./Structure";
 import {
   api,
@@ -14,7 +15,7 @@ import {
   type Page,
   type Relation,
   type RelationRef,
-  type RowUpdate,
+  type Changes,
   type Rows,
   type Sort,
   type TableInfo,
@@ -50,6 +51,10 @@ export function TableView({ connectionId, relation, onOpen }: Props) {
   const [notice, setNotice] = useState<string | null>(null);
   // Keyed by the row's primary-key values, so edits survive sorting and paging.
   const [edits, setEdits] = useState<Record<string, PendingRow>>({});
+  const [inserts, setInserts] = useState<ColumnValue[][]>([]);
+  // Rows marked for deletion, by the same key as edits.
+  const [deletes, setDeletes] = useState<Record<string, ColumnValue[]>>({});
+  const [adding, setAdding] = useState(false);
   const [review, setReview] = useState<{ sql: string[]; error: string | null; saving: boolean } | null>(null);
   const [reloads, setReloads] = useState(0);
   const root = useRef<HTMLDivElement>(null);
@@ -62,6 +67,8 @@ export function TableView({ connectionId, relation, onOpen }: Props) {
     setFilters([]);
     setInfo(null);
     setEdits({});
+    setInserts([]);
+    setDeletes({});
     api.describe(connectionId, relation).then(setInfo, (e) => setError(String(e)));
   }, [connectionId, relation.schema, relation.name]);
 
@@ -142,7 +149,15 @@ export function TableView({ connectionId, relation, onOpen }: Props) {
   const pkIndexes = columns.flatMap((c, i) => (c.primary_key ? [i] : []));
   const rowAt = (i: number) => pages[Math.floor((base + i) / PAGE_SIZE)]?.[(base + i) % PAGE_SIZE];
   const keyOf = (r: (string | null)[]) => JSON.stringify(pkIndexes.map((i) => r[i]));
-  const changeCount = Object.values(edits).reduce((n, e) => n + Object.keys(e.changes).length, 0);
+  const editCount = Object.values(edits).reduce((n, e) => n + Object.keys(e.changes).length, 0);
+  const deleteCount = Object.keys(deletes).length;
+  const changeCount = editCount + inserts.length + deleteCount;
+  const keyValues = (r: (string | null)[]) => pkIndexes.map((p) => ({ column: columns[p].name, value: r[p] }));
+  const discardAll = () => {
+    setEdits({});
+    setInserts([]);
+    setDeletes({});
+  };
 
   const edit: GridEdit = {
     blocked:
@@ -153,6 +168,23 @@ export function TableView({ connectionId, relation, onOpen }: Props) {
           : null,
     onBlocked: setNotice,
     nullable: columns.map((c) => c.nullable),
+    deleted(i) {
+      const r = rowAt(i);
+      return !!r && keyOf(r) in deletes;
+    },
+    onDeleteRows(rows) {
+      const loaded = rows.map(rowAt).filter((r): r is (string | null)[] => !!r);
+      setDeletes((all) => {
+        // Marking rows that are all marked already unmarks them.
+        const allMarked = loaded.every((r) => keyOf(r) in all);
+        const next = { ...all };
+        for (const r of loaded) {
+          if (allMarked) delete next[keyOf(r)];
+          else next[keyOf(r)] = keyValues(r);
+        }
+        return next;
+      });
+    },
     pending(i, c) {
       const r = rowAt(i);
       const change = r && edits[keyOf(r)]?.changes[columns[c].name];
@@ -164,7 +196,7 @@ export function TableView({ connectionId, relation, onOpen }: Props) {
       const key = keyOf(r);
       const name = columns[c].name;
       setEdits((all) => {
-        const row: PendingRow = all[key] ?? { key: pkIndexes.map((p) => ({ column: columns[p].name, value: r[p] })), changes: {} };
+        const row: PendingRow = all[key] ?? { key: keyValues(r), changes: {} };
         const changes = { ...row.changes };
         // Back to what was loaded = no change.
         if (value === r[c]) delete changes[name];
@@ -175,16 +207,22 @@ export function TableView({ connectionId, relation, onOpen }: Props) {
     },
   };
 
-  const updates = (): RowUpdate[] =>
-    Object.values(edits).map((e) => ({
-      key: e.key,
-      changes: Object.entries(e.changes).map(([column, c]) => ({ column, old: c.old, new: c.new })),
-    }));
+  const changes = (): Changes => ({
+    // A row being deleted doesn't need its edits.
+    updates: Object.entries(edits)
+      .filter(([key]) => !(key in deletes))
+      .map(([, e]) => ({
+        key: e.key,
+        changes: Object.entries(e.changes).map(([column, c]) => ({ column, old: c.old, new: c.new })),
+      })),
+    inserts,
+    deletes: Object.values(deletes),
+  });
 
   async function startReview() {
     if (changeCount === 0) return;
     try {
-      setReview({ sql: await api.previewUpdates(connectionId, relation, updates()), error: null, saving: false });
+      setReview({ sql: await api.previewChanges(connectionId, relation, changes()), error: null, saving: false });
     } catch (e) {
       setNotice(String(e));
     }
@@ -195,11 +233,11 @@ export function TableView({ connectionId, relation, onOpen }: Props) {
     setReview({ ...review, saving: true, error: null });
     const started = performance.now();
     try {
-      const rows = await api.applyUpdates(connectionId, relation, updates());
-      setEdits({});
+      const rows = await api.applyChanges(connectionId, relation, changes());
+      discardAll();
       setReview(null);
       setReloads((n) => n + 1);
-      setNotice(`Saved ${plural(rows, "row")} · ${Math.round(performance.now() - started)} ms`);
+      setNotice(`Saved ${plural(rows, "statement")} · ${Math.round(performance.now() - started)} ms`);
     } catch (e) {
       setReview({ ...review, saving: false, error: String(e) });
     }
@@ -251,6 +289,11 @@ export function TableView({ connectionId, relation, onOpen }: Props) {
           </button>
         </div>
         <span className="grow" />
+        {tab === "data" && !edit.blocked && info && (
+          <button className="ghost" onClick={() => setAdding(true)} title="Add a row; saved with ⌘S">
+            + Row
+          </button>
+        )}
         {tab === "data" && (
           <ExportMenu
             disabled={!meta}
@@ -326,15 +369,35 @@ export function TableView({ connectionId, relation, onOpen }: Props) {
 
       {tab === "data" && changeCount > 0 && (
         <div className="edit-bar">
-          <span>{plural(changeCount, "unsaved change")}</span>
+          <span>
+            {[
+              editCount && plural(editCount, "changed value"),
+              inserts.length && plural(inserts.length, "new row"),
+              deleteCount && `${plural(deleteCount, "row")} to delete`,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          </span>
           <span className="grow" />
-          <button className="ghost" onClick={() => setEdits({})}>
+          <button className="ghost" onClick={discardAll}>
             Discard
           </button>
-          <button className="primary" onClick={startReview} title="Review the UPDATE statements (⌘S)">
+          <button className="primary" onClick={startReview} title="Review the statements (⌘S)">
             Save…
           </button>
         </div>
+      )}
+
+      {adding && (
+        <NewRow
+          table={`${relation.schema}.${relation.name}`}
+          columns={columns}
+          onClose={() => setAdding(false)}
+          onAdd={(row) => {
+            setInserts((all) => [...all, row]);
+            setAdding(false);
+          }}
+        />
       )}
 
       {review && (
@@ -344,9 +407,11 @@ export function TableView({ connectionId, relation, onOpen }: Props) {
             onMouseDown={(e) => e.stopPropagation()}
           >
             <h2>
-              Save {plural(changeCount, "change")} to {relation.schema}.{relation.name}?
+              Save to {relation.schema}.{relation.name}?
             </h2>
-            <p className="muted">Runs in one transaction. If any row changed since it was loaded, nothing is saved.</p>
+            <p className="muted">
+              Runs in one transaction. If any row changed or went away since it was loaded, nothing is saved.
+            </p>
             <pre className="sql-preview">{review.sql.join("\n")}</pre>
             {review.error && <p className="error">{review.error}</p>}
             <div className="actions">

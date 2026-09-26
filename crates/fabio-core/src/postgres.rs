@@ -6,7 +6,7 @@ use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use tokio_postgres::{Client, SimpleQueryMessage, types::ToSql};
 
-use crate::edit::{self, EditDialect, RowUpdate};
+use crate::edit::{self, Changes, EditDialect};
 use crate::export::{self, ExportFormat, RowWriter};
 use crate::sql::{self, Dialect, quote};
 use crate::{
@@ -477,18 +477,18 @@ impl Pg {
         export::remove_on_error(path, written)
     }
 
-    pub async fn apply_updates(&self, relation: &RelationRef, info: &TableInfo, updates: &[RowUpdate]) -> Result<u64> {
+    pub async fn apply_changes(&self, relation: &RelationRef, info: &TableInfo, changes: &Changes) -> Result<u64> {
         let from = format!("{}.{}", quote(&relation.schema), quote(&relation.name));
+        let steps = edit::steps(&EDIT, &from, info, changes)?;
         self.client.batch_execute("BEGIN /* fabio */").await?;
         let applied = async {
-            for update in updates {
-                let (sql, params) = edit::statement(&EDIT, &from, info, update)?;
-                let params: Vec<&(dyn ToSql + Sync)> = params.iter().map(|p| p as _).collect();
-                if self.client.execute(&sql, &params).await? != 1 {
-                    return Err(edit::stale(info, update));
+            for step in &steps {
+                let params: Vec<&(dyn ToSql + Sync)> = step.params.iter().map(|p| p as _).collect();
+                if self.client.execute(&step.sql, &params).await? != 1 {
+                    return Err(Error::Invalid(step.if_not_one.to_string()));
                 }
             }
-            Ok(updates.len() as u64)
+            Ok(steps.len() as u64)
         }
         .await;
         match applied {
@@ -531,6 +531,7 @@ impl Pg {
 
 const EDIT: EditDialect = EditDialect {
     param: |n| format!("${n}::text"),
+    value: |col, p| format!("CAST({p} AS {})", col.base_type),
     assign: |col, p| format!("{} = CAST({p} AS {})", quote(&col.name), col.base_type),
     key: |col, p| format!("{} = CAST({p} AS {})", quote(&col.name), col.base_type),
     // Compared as text: the value came to the grid as text.

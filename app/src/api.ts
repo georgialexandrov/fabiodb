@@ -135,6 +135,9 @@ export type ColumnValue = { column: string; value: string | null };
 /** `old` is what the grid showed; the save only applies if the row still has it. */
 export type RowUpdate = { key: ColumnValue[]; changes: { column: string; old: string | null; new: string | null }[] };
 
+/** One save: edits, then deletions (by primary key), then new rows (columns left out take defaults). */
+export type Changes = { updates: RowUpdate[]; inserts: ColumnValue[][]; deletes: ColumnValue[][] };
+
 export type ExportFormat = "csv" | "tsv" | "json" | "markdown" | "insert";
 
 export type CompletionTable = { schema: string; name: string; columns: string[] };
@@ -183,10 +186,10 @@ export const api = {
     invoke<void>("export_rows", { columns, rows, format, table, path }),
   copyRows: (columns: ResultColumn[], rows: Rows, format: ExportFormat, table: RelationRef | null) =>
     invoke<string>("copy_rows", { columns, rows, format, table }),
-  previewUpdates: (id: string, relation: RelationRef, updates: RowUpdate[]) =>
-    invoke<string[]>("preview_updates", { id, relation, updates }),
-  applyUpdates: (id: string, relation: RelationRef, updates: RowUpdate[]) =>
-    invoke<number>("apply_updates", { id, relation, updates }),
+  previewChanges: (id: string, relation: RelationRef, changes: Changes) =>
+    invoke<string[]>("preview_changes", { id, relation, changes }),
+  applyChanges: (id: string, relation: RelationRef, changes: Changes) =>
+    invoke<number>("apply_changes", { id, relation, changes }),
   completionSchema: (id: string) => invoke<CompletionTable[]>("completion_schema", { id }),
   openSession: (connectionId: string) => invoke<string>("open_session", { connectionId }),
   closeSession: (id: string) => invoke<void>("close_session", { id }),

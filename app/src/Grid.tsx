@@ -50,6 +50,10 @@ export type GridEdit = {
   blocked: string | null;
   onBlocked: (reason: string) => void;
   nullable: boolean[];
+  /** Rows marked for deletion (struck through until saved). */
+  deleted: (row: number) => boolean;
+  /** Marks the rows, or unmarks them if all are marked already. */
+  onDeleteRows: (rows: number[]) => void;
 };
 
 /** Virtualized, random-access grid. Only on-screen rows are rendered. */
@@ -123,6 +127,8 @@ export function Grid(props: Props) {
     else if (!anchor) setAnchor(selected);
     setSelected(at);
   }
+
+  const rangeRows = () => (range ? Array.from({ length: range.bottom - range.top + 1 }, (_, i) => range.top + i) : []);
 
   /** The selected rectangle, loaded rows only, in `format`. */
   async function copy(format: ExportFormat) {
@@ -206,6 +212,9 @@ export function Grid(props: Props) {
       if ((e.metaKey || e.ctrlKey) && e.key === "c") {
         if (window.getSelection()?.toString()) return;
         copy("tsv");
+      } else if ((e.metaKey || e.ctrlKey) && e.key === "Backspace" && edit && range) {
+        if (edit.blocked) edit.onBlocked(edit.blocked);
+        else edit.onDeleteRows(rangeRows());
       } else if ((e.metaKey || e.ctrlKey) && e.key === "i") {
         toggleRowPane();
       } else if ((e.metaKey || e.ctrlKey) && e.key === "f" && onFilter) {
@@ -283,7 +292,7 @@ export function Grid(props: Props) {
             return (
               <div
                 key={item.key}
-                className={`grid-row ${r ? "" : "pending"}`}
+                className={`grid-row ${r ? "" : "pending"} ${r && edit?.deleted(item.index) ? "deleted" : ""}`}
                 style={{ transform: `translateY(${item.start + ROW_HEIGHT}px)`, width: totalWidth }}
               >
                 <div className="grid-cell grid-gutter" style={{ width: gutter }}>
@@ -349,6 +358,15 @@ export function Grid(props: Props) {
         <div className="menu grid-menu" style={{ position: "fixed", left: menu.x, top: menu.y, right: "auto" }}>
           <button onClick={() => (setMenu(null), copy("tsv"))}>Copy</button>
           <div className="menu-separator" />
+          {edit && !edit.blocked && (
+            <>
+              <button onClick={() => (setMenu(null), edit.onDeleteRows(rangeRows()))}>
+                {rangeRows().every((i) => edit.deleted(i)) ? "Keep" : "Delete"}{" "}
+                {rangeRows().length === 1 ? "row" : `${rangeRows().length} rows`} <kbd>⌘⌫</kbd>
+              </button>
+              <div className="menu-separator" />
+            </>
+          )}
           {COPY_FORMATS.filter((f) => f.format !== "insert" || table).map((f) => (
             <button key={f.format} onClick={() => (setMenu(null), copy(f.format).catch((e) => onNotice?.(String(e))))}>
               Copy as {f.label}

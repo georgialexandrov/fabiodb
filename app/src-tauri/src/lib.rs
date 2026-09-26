@@ -6,9 +6,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use fabio_core::{
-    AuditEntry, AuditLog, CompletionTable, Count, Db, Discovery, ExportFormat, Filter, Insights, NewAuditEntry, Page,
-    PageRequest, PgTarget, Plan, QueryResult, Relation, RelationRef, ResultColumn, RowUpdate, Rows, SavedConnection,
-    Snippet, Snippets, Sort, Source, Store, TableInfo, Target, format_rows,
+    AuditEntry, AuditLog, Changes, CompletionTable, Count, Db, Discovery, ExportFormat, Filter, Insights,
+    NewAuditEntry, Page, PageRequest, PgTarget, Plan, QueryResult, Relation, RelationRef, ResultColumn, Rows,
+    SavedConnection, Snippet, Snippets, Sort, Source, Store, TableInfo, Target, format_rows,
 };
 use serde::Serialize;
 use tauri::{Manager, State};
@@ -308,28 +308,24 @@ fn copy_rows(columns: Vec<ResultColumn>, rows: Rows, format: ExportFormat, table
     format_rows(format, &columns, &rows, table.as_ref()).map_err(err)
 }
 
-/// The UPDATEs a save would run, for the user to read first.
+/// The statements a save would run, for the user to read first.
 #[tauri::command]
-async fn preview_updates(
-    app: State<'_, App>,
-    id: String,
-    relation: RelationRef,
-    updates: Vec<RowUpdate>,
-) -> Res<Vec<String>> {
+async fn preview_changes(app: State<'_, App>, id: String, relation: RelationRef, changes: Changes) -> Res<Vec<String>> {
     let relation = &relation;
-    let updates = &updates;
-    app.browsing(&id, |db| async move { db.update_statements(relation, updates).await }).await
+    let changes = &changes;
+    app.browsing(&id, |db| async move { db.change_statements(relation, changes).await }).await
 }
 
-/// Saves cell edits in one transaction on a writable connection of its own
-/// (browsing stays read-only), and records them like any typed statement.
+/// Saves edits, new rows and deletions in one transaction on a writable
+/// connection of its own (browsing stays read-only), and records them like
+/// any typed statement.
 #[tauri::command]
-async fn apply_updates(app: State<'_, App>, id: String, relation: RelationRef, updates: Vec<RowUpdate>) -> Res<u64> {
+async fn apply_changes(app: State<'_, App>, id: String, relation: RelationRef, changes: Changes) -> Res<u64> {
     let db = app.open_db(&id).await?;
-    let sql = db.update_statements(&relation, &updates).await.map_err(err)?.join("\n");
+    let sql = db.change_statements(&relation, &changes).await.map_err(err)?.join("\n");
     let started = Instant::now();
     let applied = match db.set_writable(true).await {
-        Ok(()) => db.apply_updates(&relation, &updates).await,
+        Ok(()) => db.apply_changes(&relation, &changes).await,
         Err(e) => Err(e),
     };
     let entry = NewAuditEntry {
@@ -511,8 +507,8 @@ pub fn run() {
             export_table,
             export_rows,
             copy_rows,
-            preview_updates,
-            apply_updates,
+            preview_changes,
+            apply_changes,
             open_session,
             close_session,
             set_write_mode,
