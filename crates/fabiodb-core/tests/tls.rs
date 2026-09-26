@@ -7,7 +7,7 @@ mod common;
 use std::path::PathBuf;
 
 use common::{postgres, postgres_target};
-use fabio_core::{Db, PgTarget, SslMode, Target};
+use fabiodb_core::{Db, PgTarget, SslMode, Target};
 
 fn ca() -> PathBuf {
     concat!(env!("CARGO_MANIFEST_DIR"), "/../../dev/.pgdata/ssl/ca.crt").into()

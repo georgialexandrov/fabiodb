@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use fabio_core::{SslMode, Target, discover};
+use fabiodb_core::{SslMode, Target, discover};
 
 fn folder(files: &[(&str, &str)]) -> PathBuf {
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -18,7 +18,7 @@ fn folder(files: &[(&str, &str)]) -> PathBuf {
     dir
 }
 
-fn pg(target: &Target) -> &fabio_core::PgTarget {
+fn pg(target: &Target) -> &fabiodb_core::PgTarget {
     match target {
         Target::Postgres(t) => t,
         _ => panic!("not postgres: {target:?}"),

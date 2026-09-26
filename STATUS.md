@@ -17,7 +17,7 @@ Mascot: Fabio the marmot, who watches the burrow and whistles once.
 Tauri 2 · Rust core · React 19 + TypeScript + Vite · CodeMirror 6 · `@tanstack/react-virtual`.
 
 ```
-crates/fabio-core/      all database logic; the app and the MCP server share it
+crates/fabiodb-core/      all database logic; the app and the MCP server share it
   src/lib.rs            Db (enum over engines), shared types, Error, Canceller
   src/postgres.rs       tokio-postgres + native-tls (SSL modes, CA file); read-only by default
   src/sqlite.rs         rusqlite (bundled); opened read-only, reopened for writes
@@ -33,7 +33,7 @@ crates/fabio-core/      all database logic; the app and the MCP server share it
   src/agent.rs          ReadOnlyDb (guardrails) + Agent (allowlist, audit, create) for MCP
   tests/                integration tests against Chinook in BOTH engines
   tests/fixtures/       fake-ssh.py (tunnel tests)
-crates/fabio-mcp/       stdio MCP server; tools.rs = schemas + result text
+crates/fabiodb-mcp/       stdio MCP server; tools.rs = schemas + result text
 app/src-tauri/src/      lib.rs: thin commands, Keychain, sessions, reconnect; menu.rs
 app/src/                React UI — App (workspaces, tabs, shortcuts), TableView, Grid,
                         QueryTab, SqlEditor, PlanView, InsightsView, AgentView,
@@ -63,8 +63,8 @@ the same folder. `perf.fabio_demo` is a scratch table used to try cell editing.
 MCP server for Claude Code (reads that folder and the keychain; `FABIO_DIR` overrides):
 
 ```sh
-cargo build -p fabio-mcp --release
-claude mcp add fabio -- "$PWD/target/release/fabio-mcp"
+cargo build -p fabiodb-mcp --release
+claude mcp add fabio -- "$PWD/target/release/fabiodb-mcp"
 ```
 
 ## Done
@@ -82,7 +82,7 @@ rolled back) with findings and plan tree, SQLite query plan, Insights.
   VALUES / TABLE / SHOW / EXPLAIN, 10 s `statement_timeout`, 500-row cap.
   SQLite: read-only, `query_only`, no ATTACH, 10 s interrupt, 500 rows.
 - **Allowlist** (`agent` flag, "Agents can query"), read fresh on every call.
-- **`fabio-mcp` tools:** list_connections, list_tables, describe_table,
+- **`fabiodb-mcp` tools:** list_connections, list_tables, describe_table,
   sample_rows, query, explain (findings + plan text), insights,
   **find_databases** (folder scan) and **create_connection** (tested before it's
   saved, open to agents, group "Added by agents", password to the keychain).

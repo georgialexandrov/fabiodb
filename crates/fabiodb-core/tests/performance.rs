@@ -39,7 +39,7 @@ async fn self_time_excludes_children() {
         .await
         .unwrap();
 
-    fn check(n: &fabio_core::PlanNode) {
+    fn check(n: &fabiodb_core::PlanNode) {
         let children: f64 = n.children.iter().filter_map(|c| c.total_ms).sum();
         if let (Some(total), Some(own)) = (n.total_ms, n.self_ms) {
             assert!(
@@ -152,7 +152,7 @@ async fn sqlite_has_no_insights() {
 
 // --- helpers --------------------------------------------------------------
 
-fn all(n: &fabio_core::PlanNode) -> Vec<&fabio_core::PlanNode> {
+fn all(n: &fabiodb_core::PlanNode) -> Vec<&fabiodb_core::PlanNode> {
     let mut out = vec![n];
     for c in &n.children {
         out.extend(all(c));
@@ -161,9 +161,9 @@ fn all(n: &fabio_core::PlanNode) -> Vec<&fabio_core::PlanNode> {
 }
 
 fn find(
-    n: &fabio_core::PlanNode,
-    pred: impl Fn(&fabio_core::PlanNode) -> bool + Copy,
-) -> Option<&fabio_core::PlanNode> {
+    n: &fabiodb_core::PlanNode,
+    pred: impl Fn(&fabiodb_core::PlanNode) -> bool + Copy,
+) -> Option<&fabiodb_core::PlanNode> {
     all(n).into_iter().find(|n| pred(n))
 }
 

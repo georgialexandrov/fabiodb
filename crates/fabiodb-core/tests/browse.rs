@@ -1,7 +1,7 @@
 mod common;
 
 use common::{postgres, sqlite};
-use fabio_core::{Filter, FilterOp, PageRequest, PgTarget, RelationKind, RelationRef, Sort, SslMode};
+use fabiodb_core::{Filter, FilterOp, PageRequest, PgTarget, RelationKind, RelationRef, Sort, SslMode};
 
 fn rel(schema: &str, name: &str) -> RelationRef {
     RelationRef { schema: schema.into(), name: name.into() }
@@ -168,7 +168,7 @@ async fn both_engines_page_the_same_data() {
     let pg = postgres().await.page(&pg_req).await.unwrap();
     let lite = sqlite().await.page(&lite_req).await.unwrap();
 
-    let ids = |p: &fabio_core::Page| p.rows.iter().map(|r| r[0].clone()).collect::<Vec<_>>();
+    let ids = |p: &fabiodb_core::Page| p.rows.iter().map(|r| r[0].clone()).collect::<Vec<_>>();
     assert_eq!(ids(&pg), ids(&lite));
     assert_eq!(pg.rows[0][1].as_deref(), Some("Occupation / Precipice"));
 }

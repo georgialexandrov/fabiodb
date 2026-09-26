@@ -883,10 +883,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "fabio"
+name = "fabiodb"
 version = "0.1.0"
 dependencies = [
- "fabio-core",
+ "fabiodb-core",
  "keyring",
  "serde",
  "serde_json",
@@ -898,7 +898,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "fabio-core"
+name = "fabiodb-core"
 version = "0.1.0"
 dependencies = [
  "futures-util",
@@ -915,10 +915,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "fabio-mcp"
+name = "fabiodb-mcp"
 version = "0.1.0"
 dependencies = [
- "fabio-core",
+ "fabiodb-core",
  "keyring",
  "serde",
  "serde_json",

@@ -15,7 +15,7 @@ export function AgentView({ entries, onOpen }: Props) {
         <p className="muted">
           Agents connect through Fabio’s MCP server, read-only. For Claude Code:
           <br />
-          <code>claude mcp add fabio -- fabio-mcp</code>
+          <code>claude mcp add fabio -- fabiodb-mcp</code>
         </p>
       </div>
     );

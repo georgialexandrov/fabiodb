@@ -1,4 +1,4 @@
-use fabio_core::{PgTarget, SavedConnection, SslMode, Store, Target};
+use fabiodb_core::{PgTarget, SavedConnection, SslMode, Store, Target};
 
 fn temp_store() -> (Store, std::path::PathBuf) {
     let dir = std::env::temp_dir().join(format!("fabio-store-{}", std::process::id()));

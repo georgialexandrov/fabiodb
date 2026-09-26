@@ -13,7 +13,7 @@ import os, statistics, subprocess, sys, time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APP = os.path.join(ROOT, "target/release/bundle/macos/Fabio.app")
-BIN = os.path.join(APP, "Contents/MacOS/fabio")
+BIN = os.path.join(APP, "Contents/MacOS/fabiodb")
 
 
 def webkit_pids():

@@ -1,4 +1,4 @@
-use fabio_core::{Snippet, Snippets};
+use fabiodb_core::{Snippet, Snippets};
 
 fn temp() -> Snippets {
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);

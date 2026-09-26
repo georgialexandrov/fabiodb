@@ -1,7 +1,7 @@
 //! Chinook in both engines. Postgres needs `dev/pg.sh start`.
 #![allow(dead_code)]
 
-use fabio_core::{Db, PgTarget, Target};
+use fabiodb_core::{Db, PgTarget, Target};
 
 pub fn postgres_target() -> Target {
     let url = std::env::var("FABIO_TEST_PG_URL").unwrap_or_else(|_| "postgres://fabio@localhost:54329/chinook".into());

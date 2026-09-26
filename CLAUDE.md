@@ -13,7 +13,7 @@ Postgres + SQLite desktop client. Tauri 2 + Rust core + React.
   performance tooling are per-engine modules, not generic abstractions.
 - Test first. Core logic is tested against a real Postgres (`dev/pg.sh start`,
   Chinook fixture in both engines), not mocks.
-- Tauri commands stay thin — logic lives in `crates/fabio-core` so the MCP server
+- Tauri commands stay thin — logic lives in `crates/fabiodb-core` so the MCP server
   shares it.
 - Agent access is read-only, enforced at the connection (`default_transaction_read_only`,
   `statement_timeout`, row cap). Never rely on the prompt for safety.
@@ -29,9 +29,9 @@ Postgres + SQLite desktop client. Tauri 2 + Rust core + React.
 
 - `dev/check.sh [--budgets]` — everything CI runs (fmt, tsc, Vitest, clippy -D warnings, tests); `--budgets` builds the release app and fails over budget
 - `dev/pg.sh start|stop|psql|reset|load` — local Postgres on :54329 with Chinook (`load`: into any running server, as CI does)
-- `cargo test -p fabio-core` — core tests (needs dev Postgres running)
+- `cargo test -p fabiodb-core` — core tests (needs dev Postgres running)
 - `cd app && pnpm test` — frontend unit tests (Vitest)
-- `cargo run -p fabio-core --example explain -- "<sql>"` — print plan findings against dev
+- `cargo run -p fabiodb-core --example explain -- "<sql>"` — print plan findings against dev
 - `cd app && pnpm tauri dev` — run the app
 - `cd app && pnpm tauri build --bundles app && python3 bench/startup.py` — budgets
 - Rust comes from Homebrew rustup: `export PATH=/opt/homebrew/opt/rustup/bin:$PATH`

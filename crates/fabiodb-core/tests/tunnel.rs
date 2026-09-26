@@ -6,7 +6,7 @@ mod common;
 use std::path::PathBuf;
 
 use common::postgres_target;
-use fabio_core::{Db, SshTunnel, Target};
+use fabiodb_core::{Db, SshTunnel, Target};
 
 fn setup() -> PathBuf {
     let log = std::env::temp_dir().join(format!("fabio-fake-ssh-{}.log", std::process::id()));

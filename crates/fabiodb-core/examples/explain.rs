@@ -1,7 +1,7 @@
 //! Prints the findings for a statement against the dev database.
-//!     cargo run -p fabio-core --example explain -- "select * from perf.big where bucket = 7"
+//!     cargo run -p fabiodb-core --example explain -- "select * from perf.big where bucket = 7"
 
-use fabio_core::{Db, PgTarget, Target};
+use fabiodb_core::{Db, PgTarget, Target};
 
 #[tokio::main]
 async fn main() {

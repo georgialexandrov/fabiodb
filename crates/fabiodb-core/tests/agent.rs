@@ -10,7 +10,9 @@ use common::{postgres, postgres_target, sqlite_target};
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use fabio_core::{Agent, AuditLog, Keychain, Limits, ReadOnlyDb, RelationRef, SavedConnection, Source, Store, Target};
+use fabiodb_core::{
+    Agent, AuditLog, Keychain, Limits, ReadOnlyDb, RelationRef, SavedConnection, Source, Store, Target,
+};
 
 fn limits() -> Limits {
     Limits { max_rows: 500, timeout: Duration::from_secs(1) }
@@ -214,10 +216,10 @@ async fn sqlite_agent_rows_are_capped() {
 struct FakeKeychain(Arc<Mutex<HashMap<String, String>>>);
 
 impl Keychain for FakeKeychain {
-    fn get(&self, id: &str) -> fabio_core::Result<Option<String>> {
+    fn get(&self, id: &str) -> fabiodb_core::Result<Option<String>> {
         Ok(self.0.lock().unwrap().get(id).cloned())
     }
-    fn set(&self, id: &str, password: &str) -> fabio_core::Result<()> {
+    fn set(&self, id: &str, password: &str) -> fabiodb_core::Result<()> {
         self.0.lock().unwrap().insert(id.into(), password.into());
         Ok(())
     }

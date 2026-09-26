@@ -2,7 +2,7 @@
 //!
 //! The agent sees only connections marked "Agents can query" in the app, can
 //! only read, and every statement lands in the app's audit log, where the
-//! agent panel shows it. All of that is enforced in `fabio_core::Agent`; this
+//! agent panel shows it. All of that is enforced in `fabiodb_core::Agent`; this
 //! file only speaks the protocol.
 //!
 //! Reads the app's folder (`FABIO_DIR` overrides it) and the app's keychain
@@ -13,7 +13,7 @@ mod tools;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use fabio_core::{Agent, AuditLog, Keychain, Limits, Store};
+use fabiodb_core::{Agent, AuditLog, Keychain, Limits, Store};
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::Mutex;
@@ -36,14 +36,14 @@ async fn main() {
     let (config, data) = dirs();
     for dir in [&config, &data] {
         if let Err(e) = std::fs::create_dir_all(dir) {
-            eprintln!("fabio-mcp: {}: {e}", dir.display());
+            eprintln!("fabiodb-mcp: {}: {e}", dir.display());
             std::process::exit(1);
         }
     }
     let audit = match AuditLog::open(data.join("audit.sqlite")) {
         Ok(log) => Arc::new(log),
         Err(e) => {
-            eprintln!("fabio-mcp: audit log: {e}");
+            eprintln!("fabiodb-mcp: audit log: {e}");
             std::process::exit(1);
         }
     };
@@ -119,22 +119,22 @@ impl Keychain for OsKeychain {
     /// No keychain (a Linux box without a secret service) is the same as no
     /// saved password: connections that need none still work, and the others
     /// fail with the server's own authentication error.
-    fn get(&self, id: &str) -> fabio_core::Result<Option<String>> {
+    fn get(&self, id: &str) -> fabiodb_core::Result<Option<String>> {
         let found = keyring::Entry::new(KEYCHAIN_SERVICE, id).and_then(|entry| entry.get_password());
         match found {
             Ok(p) => Ok(Some(p)),
             Err(keyring::Error::NoEntry) => Ok(None),
             Err(e) => {
-                eprintln!("fabio-mcp: keychain unavailable, connecting without a password: {e}");
+                eprintln!("fabiodb-mcp: keychain unavailable, connecting without a password: {e}");
                 Ok(None)
             }
         }
     }
 
-    fn set(&self, id: &str, password: &str) -> fabio_core::Result<()> {
+    fn set(&self, id: &str, password: &str) -> fabiodb_core::Result<()> {
         keyring::Entry::new(KEYCHAIN_SERVICE, id)
             .and_then(|entry| entry.set_password(password))
-            .map_err(|e| fabio_core::Error::Invalid(format!("keychain: {e}")))
+            .map_err(|e| fabiodb_core::Error::Invalid(format!("keychain: {e}")))
     }
 }
 

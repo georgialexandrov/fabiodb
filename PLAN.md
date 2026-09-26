@@ -61,11 +61,11 @@ Mascot: Fabio the marmot — sits by the burrow, whistles when something is wron
 ```
 fabio/
   crates/
-    fabio-core/     connections, introspection, paging, explain, audit log
+    fabiodb-core/     connections, introspection, paging, explain, audit log
       engine/       `Engine` trait + postgres.rs + sqlite.rs
-    fabio-mcp/      MCP server binary (stdio) — uses fabio-core
+    fabiodb-mcp/      MCP server binary (stdio) — uses fabiodb-core
   app/
-    src-tauri/      Tauri commands — thin wrappers over fabio-core
+    src-tauri/      Tauri commands — thin wrappers over fabiodb-core
     src/            React UI
   dev/
     pg.sh                project-local Postgres 18 (Homebrew), loads Chinook
@@ -84,7 +84,7 @@ fabio/
   by another writer (WAL mode helps; show a clear "database is locked" state).
 
 - **One core, two front doors.** The desktop app and the MCP server both call
-  `fabio-core`. The agent works even when the app is closed.
+  `fabiodb-core`. The agent works even when the app is closed.
 - **Shared audit log** — SQLite in the app data dir. Every statement (human or
   agent) is logged with source, SQL, duration, rows, error. The UI tails it; that
   is how agent activity becomes visible.
@@ -142,8 +142,8 @@ current one's exit criteria hold.
   (`SCAN` without an index) highlighted. No stats views exist to build more on.
 - **Exit:** you can answer "why is this slow?" without leaving Fabio.
 
-### Phase 4 — Agent (weekend 4) — 🟡 built 2026-09-26: guardrails, `fabio-mcp`, agent panel; seen on screen: panel, summary line, opening an agent EXPLAIN. Left: the exit run with Claude Code
-- `fabio-mcp` tools: `list_connections`, `list_tables`, `describe_table`,
+### Phase 4 — Agent (weekend 4) — 🟡 built 2026-09-26: guardrails, `fabiodb-mcp`, agent panel; seen on screen: panel, summary line, opening an agent EXPLAIN. Left: the exit run with Claude Code
+- `fabiodb-mcp` tools: `list_connections`, `list_tables`, `describe_table`,
   `sample_rows`, `query` (read-only), `explain` (findings + plan as text), `insights`.
   The protocol (initialize, ping, tools/list, tools/call over stdio) is
   hand-written, about 100 lines; an SDK would add more dependencies than it saves.
@@ -225,5 +225,7 @@ A built-in chat UI with its own LLM keys (MCP covers it; revisit after Phase 4).
 
 ## Name
 
-Working name **Fabio**; repo/binary **`fabiodb`** before going public —
-`fabio` alone collides with the existing fabiolb load balancer.
+The app is **Fabio**; crates and binaries are **`fabiodb`** (`fabiodb-core`,
+`fabiodb-mcp`, the app binary `fabiodb`) — `fabio` alone collides with the
+existing fabiolb load balancer. Renamed 2026-09-26. The bundle id stays
+`dev.fabio.app`, so saved connections and Keychain entries carry over.

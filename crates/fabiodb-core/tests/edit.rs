@@ -4,7 +4,7 @@
 mod common;
 
 use common::{postgres, sqlite_target};
-use fabio_core::{CellChange, ColumnValue, Db, RelationRef, RowUpdate, Target};
+use fabiodb_core::{CellChange, ColumnValue, Db, RelationRef, RowUpdate, Target};
 
 fn cv(column: &str, value: Option<&str>) -> ColumnValue {
     ColumnValue { column: column.into(), value: value.map(Into::into) }
@@ -169,7 +169,7 @@ async fn sqlite_applies_and_checks_updates() {
 
 // --- inserts and deletes ---------------------------------------------------
 
-use fabio_core::Changes;
+use fabiodb_core::Changes;
 
 #[tokio::test]
 async fn postgres_inserts_with_defaults_and_deletes_by_key_in_one_transaction() {

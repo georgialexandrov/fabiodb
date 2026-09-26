@@ -5,7 +5,7 @@ mod common;
 use std::time::{Duration, Instant};
 
 use common::{postgres, sqlite, sqlite_target};
-use fabio_core::{Db, Target};
+use fabiodb_core::{Db, Target};
 
 #[tokio::test]
 async fn postgres_result_is_capped_and_flagged() {

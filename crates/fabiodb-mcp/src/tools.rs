@@ -3,7 +3,7 @@
 
 use std::fmt::Write;
 
-use fabio_core::{Agent, Plan, PlanNode, RelationRef};
+use fabiodb_core::{Agent, Plan, PlanNode, RelationRef};
 use serde_json::{Value, json};
 
 pub fn list() -> Value {
@@ -85,7 +85,7 @@ pub fn list() -> Value {
 
 pub async fn call(agent: &Agent, tool: &str, args: &Value) -> Result<String, String> {
     let text = |key: &str| args[key].as_str().ok_or_else(|| format!("missing argument: {key}"));
-    let fail = |e: fabio_core::Error| e.to_string();
+    let fail = |e: fabiodb_core::Error| e.to_string();
     match tool {
         "list_connections" => to_json(&agent.connections().map_err(fail)?),
         "list_tables" => {
@@ -121,7 +121,7 @@ pub async fn call(agent: &Agent, tool: &str, args: &Value) -> Result<String, Str
         }
         "insights" => to_json(&agent.insights(text("connection")?).await.map_err(fail)?),
         "find_databases" => {
-            let discovery = fabio_core::discover(std::path::Path::new(text("folder")?)).map_err(fail)?;
+            let discovery = fabiodb_core::discover(std::path::Path::new(text("folder")?)).map_err(fail)?;
             let found: Vec<_> = discovery
                 .found
                 .iter()
@@ -141,9 +141,9 @@ pub async fn call(agent: &Agent, tool: &str, args: &Value) -> Result<String, Str
 }
 
 /// A postgres:// URL (password included, as the Compose file has it) or a file path.
-fn url_of(target: &fabio_core::Target) -> String {
+fn url_of(target: &fabiodb_core::Target) -> String {
     match target {
-        fabio_core::Target::Postgres(pg) => {
+        fabiodb_core::Target::Postgres(pg) => {
             let enc = |s: &str| {
                 s.bytes()
                     .map(|b| match b {
@@ -155,7 +155,7 @@ fn url_of(target: &fabio_core::Target) -> String {
             let password = pg.password.as_deref().map(|p| format!(":{}", enc(p))).unwrap_or_default();
             format!("postgres://{}{password}@{}:{}/{}", enc(&pg.user), pg.host, pg.port, enc(&pg.database))
         }
-        fabio_core::Target::Sqlite { path } => path.display().to_string(),
+        fabiodb_core::Target::Sqlite { path } => path.display().to_string(),
     }
 }
 

@@ -1,4 +1,4 @@
-use fabio_core::{AuditLog, NewAuditEntry, Source};
+use fabiodb_core::{AuditLog, NewAuditEntry, Source};
 
 fn entry(connection: &str, sql: &str) -> NewAuditEntry {
     NewAuditEntry {

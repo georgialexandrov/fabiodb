@@ -14,7 +14,7 @@ step "frontend"; (cd app && pnpm exec tsc --noEmit && pnpm test)
 # The app crate embeds app/dist; build it so clippy can compile the app.
 [ -d app/dist ] || (cd app && pnpm build >/dev/null)
 step "clippy";   cargo clippy --workspace --all-targets -- -D warnings
-step "tests";    cargo test -p fabio-core -p fabio-mcp
+step "tests";    cargo test -p fabiodb-core -p fabiodb-mcp
 
 if [ "${1:-}" = "--budgets" ]; then
   step "budgets"

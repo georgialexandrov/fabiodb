@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use fabio_core::{AuditLog, PgTarget, SavedConnection, Source, Store, Target};
+use fabiodb_core::{AuditLog, PgTarget, SavedConnection, Source, Store, Target};
 use serde_json::{Value, json};
 
 struct Server {
@@ -24,7 +24,7 @@ impl Server {
         // Tests run in parallel and clean up after themselves: one folder each.
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let dir = std::env::temp_dir().join(format!(
-            "fabio-mcp-{}-{}",
+            "fabiodb-mcp-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
@@ -43,7 +43,7 @@ impl Server {
                 .unwrap();
         }
 
-        let mut child = Command::new(env!("CARGO_BIN_EXE_fabio-mcp"))
+        let mut child = Command::new(env!("CARGO_BIN_EXE_fabiodb-mcp"))
             .env("FABIO_DIR", &dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

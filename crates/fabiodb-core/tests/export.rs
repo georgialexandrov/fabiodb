@@ -3,7 +3,7 @@
 mod common;
 
 use common::{postgres, sqlite};
-use fabio_core::{ExportFormat, Filter, FilterOp, RelationRef, ResultColumn, Sort, format_rows};
+use fabiodb_core::{ExportFormat, Filter, FilterOp, RelationRef, ResultColumn, Sort, format_rows};
 
 fn col(name: &str, data_type: &str) -> ResultColumn {
     ResultColumn { name: name.into(), data_type: data_type.into() }

@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use fabio_core::{
+use fabiodb_core::{
     AuditEntry, AuditLog, Changes, CompletionTable, Count, Db, Discovery, ExportFormat, Filter, Insights,
     NewAuditEntry, Page, PageRequest, PgTarget, Plan, QueryResult, Relation, RelationRef, ResultColumn, Rows,
     SavedConnection, Snippet, Snippets, Sort, Source, Store, TableInfo, Target, format_rows,
@@ -109,7 +109,7 @@ impl App {
     /// and the call tried once more. Browsing holds no state worth losing.
     async fn browsing<T, F>(&self, id: &str, call: impl Fn(Arc<Db>) -> F) -> Res<T>
     where
-        F: std::future::Future<Output = fabio_core::Result<T>> + Send,
+        F: std::future::Future<Output = fabiodb_core::Result<T>> + Send,
     {
         let mut db = self.db(id)?;
         if db.is_closed() {
@@ -157,7 +157,7 @@ impl App {
 }
 
 /// A statement failed; if that's because the connection died, reopen it and say so.
-async fn statement_error(app: &App, id: &str, db: &Db, e: fabio_core::Error) -> QueryError {
+async fn statement_error(app: &App, id: &str, db: &Db, e: fabiodb_core::Error) -> QueryError {
     if db.is_closed() && app.reopen_session(id).await.is_ok() {
         return QueryError { message: format!("{e}. {LOST}"), position: None };
     }
@@ -220,7 +220,7 @@ async fn test_connection(connection: SavedConnection, password: Option<String>) 
 /// Databases in a project folder (Compose services, SQLite files), to pick from.
 #[tauri::command]
 async fn discover_folder(path: PathBuf) -> Res<Discovery> {
-    tauri::async_runtime::spawn_blocking(move || fabio_core::discover(&path)).await.map_err(err)?.map_err(err)
+    tauri::async_runtime::spawn_blocking(move || fabiodb_core::discover(&path)).await.map_err(err)?.map_err(err)
 }
 
 #[tauri::command]

@@ -58,8 +58,8 @@ open ../target/release/bundle/macos/Fabio.app
 Build the MCP server and register it with your agent:
 
 ```sh
-cargo build -p fabio-mcp --release
-claude mcp add fabio -- "$PWD/target/release/fabio-mcp"
+cargo build -p fabiodb-mcp --release
+claude mcp add fabio -- "$PWD/target/release/fabiodb-mcp"
 ```
 
 Then tick **Agents can query** on the connections you want to share. The agent
@@ -92,7 +92,7 @@ stopped only by the role's privileges.
 
 ## Developing
 
-Read `STATUS.md` first. Core logic lives in `crates/fabio-core` and is tested
+Read `STATUS.md` first. Core logic lives in `crates/fabiodb-core` and is tested
 against real databases (`dev/pg.sh start` runs a local Postgres with the
 Chinook sample; the same data ships as SQLite). `dev/check.sh` runs what CI
 runs; `dev/check.sh --budgets` also checks the performance budgets. Text in the
