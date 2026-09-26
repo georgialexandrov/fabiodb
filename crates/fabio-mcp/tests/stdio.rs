@@ -23,11 +23,16 @@ impl Server {
     fn start() -> Server {
         // Tests run in parallel and clean up after themselves: one folder each.
         static NEXT: AtomicUsize = AtomicUsize::new(0);
-        let dir = std::env::temp_dir().join(format!("fabio-mcp-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        let dir = std::env::temp_dir().join(format!(
+            "fabio-mcp-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         let store = Store::new(dir.join("connections.json"));
         let sqlite: PathBuf = concat!(env!("CARGO_MANIFEST_DIR"), "/../../dev/data/Chinook_Sqlite.sqlite").into();
-        let url = std::env::var("FABIO_TEST_PG_URL").unwrap_or_else(|_| "postgres://fabio@localhost:54329/chinook".into());
+        let url =
+            std::env::var("FABIO_TEST_PG_URL").unwrap_or_else(|_| "postgres://fabio@localhost:54329/chinook".into());
         for (id, agent, target) in [
             ("pg", true, Target::Postgres(PgTarget::from_url(&url).unwrap())),
             ("lite", true, Target::Sqlite { path: sqlite.clone() }),
@@ -93,8 +98,12 @@ impl Drop for Server {
 fn lists_its_tools() {
     let mut server = Server::start();
     let tools = server.request("tools/list", json!({}));
-    let names: Vec<_> = tools["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-    assert_eq!(names, ["list_connections", "list_tables", "describe_table", "sample_rows", "query", "explain", "insights"]);
+    let names: Vec<_> =
+        tools["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
+    assert_eq!(
+        names,
+        ["list_connections", "list_tables", "describe_table", "sample_rows", "query", "explain", "insights"]
+    );
 }
 
 #[test]
@@ -131,7 +140,8 @@ fn browses_tables_in_both_engines() {
 #[test]
 fn queries_are_read_only_and_audited_as_agent() {
     let mut server = Server::start();
-    let (text, error) = server.call("query", json!({"connection": "pg", "sql": "select name from artist where artist_id = 1"}));
+    let (text, error) =
+        server.call("query", json!({"connection": "pg", "sql": "select name from artist where artist_id = 1"}));
     assert!(!error, "{text}");
     assert!(text.contains("AC/DC"), "{text}");
 

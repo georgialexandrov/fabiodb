@@ -188,8 +188,15 @@ fn postgres_findings(root: &PlanNode, execution_ms: f64) -> Vec<Finding> {
             let (hi, lo) = (est.max(per_loop), est.min(per_loop).max(1.0));
             if hi >= 1000.0 && hi / lo >= 10.0 {
                 let table = node.target.as_deref().filter(|t| t.contains('.'));
-                let fix = table.map_or_else(|| "Statistics may be stale.".to_string(), |t| format!("Statistics may be stale — try ANALYZE {t}."));
-                parts.push(format!("The planner expected {} rows from {name} and got {}. {fix}", count(est), count(per_loop)));
+                let fix = table.map_or_else(
+                    || "Statistics may be stale.".to_string(),
+                    |t| format!("Statistics may be stale — try ANALYZE {t}."),
+                );
+                parts.push(format!(
+                    "The planner expected {} rows from {name} and got {}. {fix}",
+                    count(est),
+                    count(per_loop)
+                ));
             }
         }
 

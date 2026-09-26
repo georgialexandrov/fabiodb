@@ -1,14 +1,14 @@
 use std::str::FromStr;
 use std::time::{Duration, Instant};
 
-use serde::{Deserialize, Serialize};
 use futures_util::StreamExt;
+use serde::{Deserialize, Serialize};
 use tokio_postgres::{Client, SimpleQueryMessage, types::ToSql};
 
 use crate::sql::{self, Dialect, quote};
 use crate::{
-    Canceller, Column, CompletionTable, Count, Error, Filter, ForeignKey, Index, Page, PageRequest, QueryResult, Relation, RelationKind,
-    RelationRef, Result, ResultColumn, TableInfo,
+    Canceller, Column, CompletionTable, Count, Error, Filter, ForeignKey, Index, Page, PageRequest, QueryResult,
+    Relation, RelationKind, RelationRef, Result, ResultColumn, TableInfo,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -82,9 +82,7 @@ impl Pg {
         if let Some(password) = &target.password {
             config.password(password);
         }
-        let tls = native_tls::TlsConnector::builder()
-            .danger_accept_invalid_certs(true)
-            .build()?;
+        let tls = native_tls::TlsConnector::builder().danger_accept_invalid_certs(true).build()?;
         let tls = postgres_native_tls::MakeTlsConnector::new(tls);
         let (client, connection) = config.connect(tls.clone()).await?;
         tokio::spawn(connection);
@@ -159,17 +157,16 @@ impl Pg {
         match self.client.prepare(sql).await {
             Ok(_) => Ok(()),
             Err(e) => match Error::from(e) {
-                Error::Postgres { message, .. } if message.contains("multiple commands") => Err(Error::Invalid(ONE_STATEMENT.into())),
+                Error::Postgres { message, .. } if message.contains("multiple commands") => {
+                    Err(Error::Invalid(ONE_STATEMENT.into()))
+                }
                 other => Err(other),
             },
         }
     }
 
     pub async fn set_statement_timeout(&self, timeout: Duration) -> Result<()> {
-        Ok(self
-            .client
-            .batch_execute(&format!("SET /* fabio */ statement_timeout = {}", timeout.as_millis()))
-            .await?)
+        Ok(self.client.batch_execute(&format!("SET /* fabio */ statement_timeout = {}", timeout.as_millis())).await?)
     }
 
     pub async fn explain(&self, sql: &str, analyze: bool, guarded: bool) -> Result<crate::Plan> {
@@ -177,9 +174,7 @@ impl Pg {
         let options = if analyze { "ANALYZE, BUFFERS, VERBOSE, FORMAT JSON" } else { "VERBOSE, FORMAT JSON" };
         // ANALYZE executes the statement; the rollback makes that harmless.
         let prefix = format!("EXPLAIN ({options}) ");
-        self.client
-            .batch_execute(if guarded { "BEGIN /* fabio */ READ ONLY" } else { "BEGIN /* fabio */" })
-            .await?;
+        self.client.batch_execute(if guarded { "BEGIN /* fabio */ READ ONLY" } else { "BEGIN /* fabio */" }).await?;
         let explained = match if guarded { self.check_single(sql).await } else { Ok(()) } {
             // Report error positions against the user's statement, not our prefix.
             Ok(()) => self.client.simple_query(&format!("{prefix}{sql}")).await.map_err(|e| match Error::from(e) {
@@ -263,10 +258,7 @@ impl Pg {
                 &[],
             )
             .await?;
-        Ok(rows
-            .iter()
-            .map(|r| CompletionTable { schema: r.get(0), name: r.get(1), columns: r.get(2) })
-            .collect())
+        Ok(rows.iter().map(|r| CompletionTable { schema: r.get(0), name: r.get(1), columns: r.get(2) }).collect())
     }
 
     async fn oid(&self, relation: &RelationRef) -> Result<u32> {
@@ -389,13 +381,8 @@ impl Pg {
         let (sql, params) = sql::page_statement(&DIALECT, &from, &info.columns, request)?;
 
         let params: Vec<&(dyn ToSql + Sync)> = params.iter().map(|p| p as _).collect();
-        let mut rows: Vec<Vec<Option<String>>> = self
-            .client
-            .query(&sql, &params)
-            .await?
-            .iter()
-            .map(|r| (0..r.len()).map(|i| r.get(i)).collect())
-            .collect();
+        let mut rows: Vec<Vec<Option<String>>> =
+            self.client.query(&sql, &params).await?.iter().map(|r| (0..r.len()).map(|i| r.get(i)).collect()).collect();
         let has_more = rows.len() > request.limit as usize;
         rows.truncate(request.limit as usize);
 

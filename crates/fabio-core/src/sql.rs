@@ -9,10 +9,7 @@ pub fn quote(ident: &str) -> String {
 }
 
 pub fn column<'a>(columns: &'a [Column], name: &str) -> Result<&'a Column> {
-    columns
-        .iter()
-        .find(|c| c.name == name)
-        .ok_or_else(|| Error::Invalid(format!("unknown column {name:?}")))
+    columns.iter().find(|c| c.name == name).ok_or_else(|| Error::Invalid(format!("unknown column {name:?}")))
 }
 
 /// How each engine spells the pieces that differ.
@@ -50,10 +47,8 @@ pub fn where_clause(dialect: &Dialect, columns: &[Column], filters: &[Filter]) -
             FilterOp::Ge => ">=",
             FilterOp::Contains => "",
         };
-        let value = filter
-            .value
-            .clone()
-            .ok_or_else(|| Error::Invalid(format!("filter on {:?} needs a value", col.name)))?;
+        let value =
+            filter.value.clone().ok_or_else(|| Error::Invalid(format!("filter on {:?} needs a value", col.name)))?;
         params.push(value);
         let placeholder = (dialect.param)(params.len());
         conditions.push(match filter.op {
@@ -66,7 +61,12 @@ pub fn where_clause(dialect: &Dialect, columns: &[Column], filters: &[Filter]) -
 }
 
 /// `SELECT count(*)` under the same filters as a page.
-pub fn count_statement(dialect: &Dialect, from: &str, columns: &[Column], filters: &[Filter]) -> Result<(String, Vec<String>)> {
+pub fn count_statement(
+    dialect: &Dialect,
+    from: &str,
+    columns: &[Column],
+    filters: &[Filter],
+) -> Result<(String, Vec<String>)> {
     let (clause, params) = where_clause(dialect, columns, filters)?;
     Ok((format!("SELECT /* fabio */ count(*) FROM {from}{clause}"), params))
 }

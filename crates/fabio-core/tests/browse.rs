@@ -1,7 +1,7 @@
 mod common;
 
 use common::{postgres, sqlite};
-use fabio_core::{Filter, FilterOp, PageRequest, PgTarget, RelationKind, RelationRef, SslMode, Sort};
+use fabio_core::{Filter, FilterOp, PageRequest, PgTarget, RelationKind, RelationRef, Sort, SslMode};
 
 fn rel(schema: &str, name: &str) -> RelationRef {
     RelationRef { schema: schema.into(), name: name.into() }
@@ -176,10 +176,7 @@ async fn both_engines_page_the_same_data() {
 #[tokio::test]
 async fn filters_combine_with_and() {
     let mut req = page(rel("public", "track"));
-    req.filters = vec![
-        filter("album_id", FilterOp::Eq, "1"),
-        filter("milliseconds", FilterOp::Gt, "300000"),
-    ];
+    req.filters = vec![filter("album_id", FilterOp::Eq, "1"), filter("milliseconds", FilterOp::Gt, "300000")];
     let p = postgres().await.page(&req).await.unwrap();
 
     // AC/DC "For Those About To Rock": one track runs past 5 minutes.

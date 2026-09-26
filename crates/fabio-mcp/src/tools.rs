@@ -8,7 +8,8 @@ use serde_json::{Value, json};
 
 pub fn list() -> Value {
     let connection = json!({"type": "string", "description": "Connection name or id, from list_connections."});
-    let table = json!({"type": "string", "description": "Table or view name, optionally schema-qualified (\"public.track\")."});
+    let table =
+        json!({"type": "string", "description": "Table or view name, optionally schema-qualified (\"public.track\")."});
     let sql = json!({"type": "string", "description": "One statement. SELECT, WITH, VALUES, TABLE, SHOW or EXPLAIN."});
     json!([
         {
@@ -69,7 +70,8 @@ pub async fn call(agent: &Agent, tool: &str, args: &Value) -> Result<String, Str
         "list_tables" => {
             let mut out = String::new();
             for r in agent.tables(text("connection")?).await.map_err(fail)? {
-                let kind = serde_json::to_value(r.kind).ok().and_then(|v| v.as_str().map(str::to_owned)).unwrap_or_default();
+                let kind =
+                    serde_json::to_value(r.kind).ok().and_then(|v| v.as_str().map(str::to_owned)).unwrap_or_default();
                 let _ = write!(out, "{}.{} ({kind}", r.schema, r.name);
                 if let Some(n) = r.estimated_rows {
                     let _ = write!(out, ", ~{n} rows");
@@ -137,7 +139,11 @@ fn plan_text(plan: &Plan) -> String {
     let mut out = String::new();
     match (plan.analyzed, plan.planning_ms, plan.execution_ms) {
         (true, planning, Some(execution)) => {
-            let _ = writeln!(out, "Execution {execution:.1} ms · planning {:.1} ms (ran read-only, rolled back)", planning.unwrap_or(0.0));
+            let _ = writeln!(
+                out,
+                "Execution {execution:.1} ms · planning {:.1} ms (ran read-only, rolled back)",
+                planning.unwrap_or(0.0)
+            );
         }
         _ => out.push_str("Estimate only, not run.\n"),
     }
@@ -146,7 +152,8 @@ fn plan_text(plan: &Plan) -> String {
     } else {
         out.push_str("\nFindings:\n");
         for f in &plan.findings {
-            let severity = serde_json::to_value(f.severity).ok().and_then(|v| v.as_str().map(str::to_owned)).unwrap_or_default();
+            let severity =
+                serde_json::to_value(f.severity).ok().and_then(|v| v.as_str().map(str::to_owned)).unwrap_or_default();
             let _ = writeln!(out, "- [{severity}] {}", f.message);
         }
     }

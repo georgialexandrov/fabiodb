@@ -128,7 +128,13 @@ pub async fn postgres(client: &Client) -> Result<Insights> {
         )
         .await?
         .iter()
-        .map(|r| UnusedIndex { schema: r.get(0), table: r.get(1), name: r.get(2), scans: r.get(3), size_bytes: r.get(4) })
+        .map(|r| UnusedIndex {
+            schema: r.get(0),
+            table: r.get(1),
+            name: r.get(2),
+            scans: r.get(3),
+            size_bytes: r.get(4),
+        })
         .collect();
 
     let seq_scan_tables = client

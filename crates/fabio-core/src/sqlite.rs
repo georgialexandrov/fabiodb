@@ -6,8 +6,8 @@ use rusqlite::{Connection, InterruptHandle, OpenFlags, params_from_iter, types::
 
 use crate::sql::{self, Dialect, quote};
 use crate::{
-    Canceller, Column, CompletionTable, Count, Error, Filter, ForeignKey, Index, Page, PageRequest, QueryResult, Relation, RelationKind,
-    RelationRef, Result, ResultColumn, Rows, TableInfo,
+    Canceller, Column, CompletionTable, Count, Error, Filter, ForeignKey, Index, Page, PageRequest, QueryResult,
+    Relation, RelationKind, RelationRef, Result, ResultColumn, Rows, TableInfo,
 };
 
 /// SQLite calls are blocking, so every call hops to the blocking pool.
@@ -198,7 +198,8 @@ impl Lite {
             let (sql, params) = sql::page_statement(&DIALECT, &from, &info.columns, &request)?;
 
             let mut statement = conn.prepare(&sql)?;
-            let (mut rows, _) = collect_rows(statement.query(params_from_iter(params))?, info.columns.len(), usize::MAX)?;
+            let (mut rows, _) =
+                collect_rows(statement.query(params_from_iter(params))?, info.columns.len(), usize::MAX)?;
             let has_more = rows.len() > request.limit as usize;
             rows.truncate(request.limit as usize);
 
@@ -254,8 +255,8 @@ fn describe(conn: &Connection, relation: &RelationRef) -> Result<TableInfo> {
 
     let mut foreign_keys: Vec<ForeignKey> = Vec::new();
     let mut last_id = None;
-    let mut statement = conn
-        .prepare(r#"SELECT id, "table", "from", "to" FROM pragma_foreign_key_list(?1, ?2) ORDER BY id, seq"#)?;
+    let mut statement =
+        conn.prepare(r#"SELECT id, "table", "from", "to" FROM pragma_foreign_key_list(?1, ?2) ORDER BY id, seq"#)?;
     let mut rows = statement.query(args)?;
     while let Some(r) = rows.next()? {
         let id: i64 = r.get(0)?;

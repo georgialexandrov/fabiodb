@@ -57,8 +57,7 @@ async fn sqlite_query_can_be_cancelled() {
     let running = tokio::spawn({
         let db = db.clone();
         async move {
-            db.query("with recursive c(x) as (select 1 union all select x + 1 from c) select count(*) from c")
-                .await
+            db.query("with recursive c(x) as (select 1 union all select x + 1 from c) select count(*) from c").await
         }
     });
     tokio::time::sleep(Duration::from_millis(200)).await;

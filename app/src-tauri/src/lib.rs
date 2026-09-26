@@ -81,12 +81,7 @@ impl App {
     }
 
     fn db(&self, id: &str) -> Res<Arc<Db>> {
-        self.open
-            .lock()
-            .unwrap()
-            .get(id)
-            .cloned()
-            .ok_or_else(|| "connection is not open".to_string())
+        self.open.lock().unwrap().get(id).cloned().ok_or_else(|| "connection is not open".to_string())
     }
 }
 

@@ -86,9 +86,7 @@ impl ReadOnlyDb {
     /// The first `rows` rows of a table, in primary-key order.
     pub async fn sample(&self, relation: &RelationRef, rows: u32) -> Result<Page> {
         let limit = rows.min(self.limits.max_rows as u32);
-        self.db
-            .page(&PageRequest { relation: relation.clone(), sort: None, filters: vec![], offset: 0, limit })
-            .await
+        self.db.page(&PageRequest { relation: relation.clone(), sort: None, filters: vec![], offset: 0, limit }).await
     }
 
     pub async fn insights(&self) -> Result<Insights> {
@@ -209,7 +207,13 @@ impl Agent {
         let (id, db) = self.db(connection).await?;
         let started = Instant::now();
         let result = db.query(sql).await;
-        self.record(id, sql.to_owned(), started, result.as_ref().ok().map(|r| r.rows.len() as u64), result.as_ref().err());
+        self.record(
+            id,
+            sql.to_owned(),
+            started,
+            result.as_ref().ok().map(|r| r.rows.len() as u64),
+            result.as_ref().err(),
+        );
         result
     }
 

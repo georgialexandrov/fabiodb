@@ -31,17 +31,16 @@ impl Store {
 
     pub fn list(&self) -> Result<Vec<SavedConnection>> {
         match std::fs::read(&self.path) {
-            Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| Error::Invalid(format!("{}: {e}", self.path.display()))),
+            Ok(bytes) => {
+                serde_json::from_slice(&bytes).map_err(|e| Error::Invalid(format!("{}: {e}", self.path.display())))
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(vec![]),
             Err(e) => Err(Error::Invalid(e.to_string())),
         }
     }
 
     pub fn get(&self, id: &str) -> Result<SavedConnection> {
-        self.list()?
-            .into_iter()
-            .find(|c| c.id == id)
-            .ok_or_else(|| Error::NotFound(format!("connection {id}")))
+        self.list()?.into_iter().find(|c| c.id == id).ok_or_else(|| Error::NotFound(format!("connection {id}")))
     }
 
     /// Inserts or replaces by id, assigning one if empty. The password is stripped.

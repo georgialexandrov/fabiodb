@@ -69,7 +69,11 @@ async fn postgres_agent_cannot_write_by_any_route() {
         assert!(db.query(sql).await.is_err(), "allowed: {sql}");
     }
     // Session state can't be changed for a later statement either.
-    for sql in ["set default_transaction_read_only = off", "begin read write", "set session characteristics as transaction read write"] {
+    for sql in [
+        "set default_transaction_read_only = off",
+        "begin read write",
+        "set session characteristics as transaction read write",
+    ] {
         let _ = db.query(sql).await;
         assert!(db.query(&format!("insert into {t} values (1)")).await.is_err(), "allowed after: {sql}");
     }
@@ -94,7 +98,15 @@ async fn postgres_agent_runs_only_reading_statements() {
     }
     assert!(!probe.exists());
 
-    for sql in ["/* hi */ select 1", "-- hi\n(select 1)", "with a as (select 1) select * from a", "values (1)", "table artist", "show work_mem", "explain select 1"] {
+    for sql in [
+        "/* hi */ select 1",
+        "-- hi\n(select 1)",
+        "with a as (select 1) select * from a",
+        "values (1)",
+        "table artist",
+        "show work_mem",
+        "explain select 1",
+    ] {
         db.query(sql).await.unwrap_or_else(|e| panic!("{sql}: {e}"));
     }
 }
@@ -199,7 +211,12 @@ fn agent_with(connections: &[(&str, bool, Target)]) -> (Agent, Arc<AuditLog>) {
     let store = Store::new(dir.join("connections.json"));
     for (name, agent, target) in connections {
         store
-            .save(SavedConnection { id: name.to_string(), name: name.to_string(), target: target.clone(), agent: *agent })
+            .save(SavedConnection {
+                id: name.to_string(),
+                name: name.to_string(),
+                target: target.clone(),
+                agent: *agent,
+            })
             .unwrap();
     }
     let audit = Arc::new(AuditLog::open(":memory:").unwrap());

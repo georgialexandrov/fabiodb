@@ -42,7 +42,11 @@ async fn self_time_excludes_children() {
     fn check(n: &fabio_core::PlanNode) {
         let children: f64 = n.children.iter().filter_map(|c| c.total_ms).sum();
         if let (Some(total), Some(own)) = (n.total_ms, n.self_ms) {
-            assert!(own >= 0.0 && (own + children - total).abs() < 0.01 || own == 0.0, "{}: {own} + {children} vs {total}", n.operation);
+            assert!(
+                own >= 0.0 && (own + children - total).abs() < 0.01 || own == 0.0,
+                "{}: {own} + {children} vs {total}",
+                n.operation
+            );
         }
         n.children.iter().for_each(check);
     }
@@ -65,7 +69,8 @@ async fn explain_analyze_of_a_write_is_rolled_back() {
 
 #[tokio::test]
 async fn read_only_session_refuses_to_analyze_a_write() {
-    let err = postgres().await.explain("insert into artist (artist_id, name) values (9999, 'x')", true).await.unwrap_err();
+    let err =
+        postgres().await.explain("insert into artist (artist_id, name) values (9999, 'x')", true).await.unwrap_err();
     assert!(err.to_string().contains("read-only"), "{err}");
 }
 
@@ -155,7 +160,10 @@ fn all(n: &fabio_core::PlanNode) -> Vec<&fabio_core::PlanNode> {
     out
 }
 
-fn find(n: &fabio_core::PlanNode, pred: impl Fn(&fabio_core::PlanNode) -> bool + Copy) -> Option<&fabio_core::PlanNode> {
+fn find(
+    n: &fabio_core::PlanNode,
+    pred: impl Fn(&fabio_core::PlanNode) -> bool + Copy,
+) -> Option<&fabio_core::PlanNode> {
     all(n).into_iter().find(|n| pred(n))
 }
 
@@ -175,5 +183,10 @@ async fn top_statements_are_the_users_not_fabios() {
     let internal = top.iter().find(|s| s.query.contains("pg_namespace n ON n.oid = c.relnamespace"));
     assert!(internal.is_none(), "internal statement listed: {:?}", internal.map(|s| &s.query));
     assert!(top.iter().all(|s| !s.query.to_lowercase().starts_with("explain")), "EXPLAIN wrapper listed");
-    assert!(insights.activity.iter().all(|a| !(a.application.as_deref() == Some("fabio") && a.state.as_deref() == Some("idle"))));
+    assert!(
+        insights
+            .activity
+            .iter()
+            .all(|a| !(a.application.as_deref() == Some("fabio") && a.state.as_deref() == Some("idle")))
+    );
 }
