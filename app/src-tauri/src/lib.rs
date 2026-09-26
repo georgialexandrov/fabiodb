@@ -4,8 +4,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use fabio_core::{
-    AuditEntry, AuditLog, CompletionTable, Count, Db, Filter, NewAuditEntry, Page, PageRequest, PgTarget,
-    QueryResult, Relation, RelationRef, SavedConnection, Source, Store, TableInfo, Target,
+    AuditEntry, AuditLog, CompletionTable, Count, Db, Filter, Insights, NewAuditEntry, Page, PageRequest, PgTarget,
+    Plan, QueryResult, Relation, RelationRef, SavedConnection, Source, Store, TableInfo, Target,
 };
 use serde::Serialize;
 use tauri::{Manager, State};
@@ -232,6 +232,32 @@ async fn run_statement(app: State<'_, App>, id: String, sql: String) -> Result<Q
     result.map_err(|e| QueryError { message: e.to_string(), position: e.position() })
 }
 
+/// Explains a statement in a query tab. With `analyze` it really runs (rolled
+/// back), so it is logged like any other statement.
+#[tauri::command]
+async fn explain(app: State<'_, App>, id: String, sql: String, analyze: bool) -> Result<Plan, QueryError> {
+    let (connection_id, db) = app.session(&id).map_err(|message| QueryError { message, position: None })?;
+    let started = Instant::now();
+    let plan = db.explain(&sql, analyze).await;
+    let entry = NewAuditEntry {
+        connection_id,
+        source: Source::Human,
+        sql: format!("EXPLAIN{} {sql}", if analyze { " ANALYZE" } else { "" }),
+        elapsed_ms: started.elapsed().as_secs_f64() * 1000.0,
+        rows: None,
+        error: plan.as_ref().err().map(ToString::to_string),
+    };
+    if let Err(e) = app.audit.record(&entry) {
+        eprintln!("audit log: {e}");
+    }
+    plan.map_err(|e| QueryError { message: e.to_string(), position: e.position() })
+}
+
+#[tauri::command]
+async fn insights(app: State<'_, App>, id: String) -> Res<Insights> {
+    app.db(&id)?.insights().await.map_err(err)
+}
+
 #[tauri::command]
 fn history(app: State<App>, connection_id: String, limit: u32) -> Res<Vec<AuditEntry>> {
     app.audit.recent(Some(&connection_id), limit).map_err(err)
@@ -286,6 +312,8 @@ pub fn run() {
             set_write_mode,
             cancel,
             run_statement,
+            explain,
+            insights,
             history,
             app_ready,
         ])

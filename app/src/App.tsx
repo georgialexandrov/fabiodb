@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { ConnectionForm } from "./ConnectionForm";
+import { InsightsView } from "./InsightsView";
 import { QueryTab } from "./QueryTab";
 import { TableView } from "./TableView";
 import {
@@ -18,7 +19,8 @@ const SQLITE_EXTENSIONS = /\.(db|sqlite|sqlite3|db3)$/i;
 
 type Tab =
   | { id: string; connectionId: string; kind: "table"; relation: RelationRef }
-  | { id: string; connectionId: string; kind: "query"; title: string; sql: string };
+  | { id: string; connectionId: string; kind: "query"; title: string; sql: string }
+  | { id: string; connectionId: string; kind: "insights" };
 
 let nextTab = 1;
 
@@ -71,10 +73,19 @@ export default function App() {
     focusTab(tab);
   }
 
-  function newQuery(connectionId = activeId) {
+  function newQuery(connectionId = activeId, sql = "") {
     if (!connectionId) return;
     const n = tabs.filter((t) => t.connectionId === connectionId && t.kind === "query").length + 1;
-    const tab: Tab = { id: `t${nextTab++}`, connectionId, kind: "query", title: `Query ${n}`, sql: "" };
+    const tab: Tab = { id: `t${nextTab++}`, connectionId, kind: "query", title: `Query ${n}`, sql };
+    setTabs((all) => [...all, tab]);
+    focusTab(tab);
+  }
+
+  function openInsights() {
+    if (!activeId) return;
+    const existing = tabs.find((t) => t.connectionId === activeId && t.kind === "insights");
+    if (existing) return focusTab(existing);
+    const tab: Tab = { id: `t${nextTab++}`, connectionId: activeId, kind: "insights" };
     setTabs((all) => [...all, tab]);
     focusTab(tab);
   }
@@ -197,6 +208,11 @@ export default function App() {
               <button className="ghost" onClick={() => newQuery()} title="New query (⌘T)">
                 SQL
               </button>
+              {active.target.engine === "postgres" && (
+                <button className="ghost" onClick={openInsights} title="What the server is doing, and where the time went">
+                  Insights
+                </button>
+              )}
             </div>
             {[...grouped].map(([schema, rels]) => (
               <div key={schema}>
@@ -223,7 +239,7 @@ export default function App() {
             {activeTabs.map((t) => (
               <div key={t.id} className={`tab ${t.id === current ? "active" : ""}`} onClick={() => focusTab(t)} onAuxClick={() => closeTab(t.id)}>
                 <span className={`tab-kind ${t.kind}`}>{t.kind === "query" ? "SQL" : ""}</span>
-                <span className="ellipsis">{t.kind === "query" ? t.title : t.relation.name}</span>
+                <span className="ellipsis">{t.kind === "query" ? t.title : t.kind === "insights" ? "Insights" : t.relation.name}</span>
                 <button
                   className="ghost tab-close"
                   onClick={(e) => {
@@ -252,6 +268,13 @@ export default function App() {
           const conn = connections.find((c) => c.id === t.connectionId);
           const visible = t.id === current && t.connectionId === activeId;
           if (!conn) return null;
+          if (t.kind === "insights") {
+            return (
+              <div key={t.id} className="tab-page" style={{ display: visible ? "flex" : "none" }}>
+                <InsightsView connectionId={t.connectionId} visible={visible} onOpenQuery={(sql) => newQuery(t.connectionId, sql)} />
+              </div>
+            );
+          }
           if (t.kind === "query") {
             return (
               <QueryTab

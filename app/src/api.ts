@@ -65,6 +65,55 @@ export type QueryResult = { columns: string[]; rows: Rows; truncated: boolean; e
 
 export type QueryError = { message: string; position: number | null };
 
+export type PlanNode = {
+  operation: string;
+  target: string | null;
+  details: { label: string; value: string }[];
+  estimated_rows: number | null;
+  actual_rows: number | null;
+  loops: number | null;
+  total_ms: number | null;
+  self_ms: number | null;
+  cost: number | null;
+  shared_hit: number | null;
+  shared_read: number | null;
+  children: PlanNode[];
+};
+
+export type Finding = { severity: "hot" | "warn"; message: string; path: number[] };
+
+export type Plan = {
+  root: PlanNode;
+  analyzed: boolean;
+  planning_ms: number | null;
+  execution_ms: number | null;
+  findings: Finding[];
+  raw: string;
+};
+
+export type Insights = {
+  activity: {
+    pid: number;
+    user: string | null;
+    application: string | null;
+    state: string | null;
+    waiting_on: string | null;
+    running_ms: number | null;
+    query: string;
+    blocked_by: number[];
+  }[];
+  top_statements: { query: string; calls: number; total_ms: number; mean_ms: number; rows: number }[] | null;
+  unused_indexes: { schema: string; table: string; name: string; scans: number; size_bytes: number }[];
+  seq_scan_tables: {
+    schema: string;
+    table: string;
+    seq_scans: number;
+    seq_rows_read: number;
+    index_scans: number | null;
+    live_rows: number;
+  }[];
+};
+
 export type CompletionTable = { schema: string; name: string; columns: string[] };
 
 export type AuditEntry = {
@@ -103,6 +152,8 @@ export const api = {
   setWriteMode: (id: string, writable: boolean) => invoke<void>("set_write_mode", { id, writable }),
   cancel: (id: string) => invoke<void>("cancel", { id }),
   runStatement: (id: string, sql: string) => invoke<QueryResult>("run_statement", { id, sql }),
+  explain: (id: string, sql: string, analyze: boolean) => invoke<Plan>("explain", { id, sql, analyze }),
+  insights: (id: string) => invoke<Insights>("insights", { id }),
   history: (connectionId: string, limit: number) => invoke<AuditEntry[]>("history", { connectionId, limit }),
 };
 

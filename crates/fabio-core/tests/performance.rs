@@ -72,7 +72,8 @@ async fn read_only_session_refuses_to_analyze_a_write() {
 #[tokio::test]
 async fn failed_explain_leaves_the_session_usable() {
     let db = postgres().await;
-    assert!(db.explain("select nme from artist", true).await.is_err());
+    let err = db.explain("select nme from artist", true).await.unwrap_err();
+    assert_eq!(err.position(), Some(8), "position is within the user's statement");
     assert_eq!(db.query("select 1").await.unwrap().rows, [[Some("1".into())]]);
 }
 
@@ -166,4 +167,17 @@ fn all(n: &fabio_core::PlanNode) -> Vec<&fabio_core::PlanNode> {
 
 fn find(n: &fabio_core::PlanNode, pred: impl Fn(&fabio_core::PlanNode) -> bool + Copy) -> Option<&fabio_core::PlanNode> {
     all(n).into_iter().find(|n| pred(n))
+}
+
+#[tokio::test]
+async fn insights_leave_out_fabios_own_statements() {
+    let db = postgres().await;
+    db.relations().await.unwrap();
+    db.explain("select * from artist", true).await.unwrap();
+
+    let insights = db.insights().await.unwrap();
+    let top = insights.top_statements.unwrap();
+    assert!(top.iter().all(|s| !s.query.starts_with("/* fabio */")), "internal statement listed");
+    assert!(top.iter().all(|s| !s.query.to_lowercase().starts_with("explain")), "EXPLAIN wrapper listed");
+    assert!(insights.activity.iter().all(|a| !(a.application.as_deref() == Some("fabio") && a.state.as_deref() == Some("idle"))));
 }

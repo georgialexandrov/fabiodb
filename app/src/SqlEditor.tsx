@@ -18,6 +18,7 @@ export type SqlEditorProps = {
   schema: CompletionTable[];
   onRun: (mode: "statement" | "all", at: EditorSnapshot) => void;
   onFormat: (at: EditorSnapshot) => void;
+  onExplain: (analyze: boolean, at: EditorSnapshot) => void;
   onCancel: () => void;
   /** Underlines this range until the text changes. */
   errorRange: { from: number; to: number } | null;
@@ -112,6 +113,8 @@ export default function SqlEditor(props: SqlEditorProps) {
             ...completionKeymap,
             { key: "Mod-Enter", run: (v) => (closeCompletion(v), latest.current.onRun("statement", snapshot(v)), true) },
             { key: "Shift-Mod-Enter", run: (v) => (closeCompletion(v), latest.current.onRun("all", snapshot(v)), true) },
+            { key: "Mod-e", run: (v) => (closeCompletion(v), latest.current.onExplain(true, snapshot(v)), true) },
+            { key: "Shift-Mod-e", run: (v) => (closeCompletion(v), latest.current.onExplain(false, snapshot(v)), true) },
             { key: "Alt-Shift-f", run: (v) => (latest.current.onFormat(snapshot(v)), true) },
             { key: "Escape", run: () => (latest.current.onCancel(), false) },
             ...defaultKeymap,
