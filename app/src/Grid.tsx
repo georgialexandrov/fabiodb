@@ -62,6 +62,23 @@ export function Grid(props: Props) {
   const [selected, setSelected] = useState<Cell | null>(null);
   const [anchor, setAnchor] = useState<Cell | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  // The selected row, one field per line, beside the grid (⌘I). Remembered across grids.
+  const [rowPane, setRowPane] = useState(() => {
+    try {
+      return localStorage.getItem("fabio.rowPane") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggleRowPane = () =>
+    setRowPane((on) => {
+      try {
+        localStorage.setItem("fabio.rowPane", on ? "0" : "1");
+      } catch {
+        // Only this grid remembers it, then.
+      }
+      return !on;
+    });
   const [editing, setEditing] = useState<{ row: number; col: number; draft: string } | null>(null);
   const [detail, setDetail] = useState<{ column: ResultColumn; value: string | null } | null>(null);
 
@@ -182,6 +199,8 @@ export function Grid(props: Props) {
       if ((e.metaKey || e.ctrlKey) && e.key === "c") {
         if (window.getSelection()?.toString()) return;
         copy("tsv");
+      } else if ((e.metaKey || e.ctrlKey) && e.key === "i") {
+        toggleRowPane();
       } else if ((e.metaKey || e.ctrlKey) && e.key === "f" && onFilter) {
         const cell = headerCells.current[selected.col];
         if (cell) onFilter(selected.col, cell.getBoundingClientRect());
@@ -214,7 +233,13 @@ export function Grid(props: Props) {
       <div className="grid" ref={scroller}>
         <div style={{ width: totalWidth, height: virtualizer.getTotalSize() + ROW_HEIGHT, position: "relative" }}>
           <div className="grid-row grid-head" style={{ width: totalWidth }}>
-            <div className="grid-cell grid-gutter" style={{ width: gutter }} />
+            <div className="grid-cell grid-gutter" style={{ width: gutter }}>
+              <button className={`row-pane-toggle ${rowPane ? "on" : ""}`} onClick={toggleRowPane} title="Row details (⌘I)">
+                <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true">
+                  <path d="M2 2h12v12H2zM10 2v12" fill="none" stroke="currentColor" strokeWidth="1.5" />
+                </svg>
+              </button>
+            </div>
             {columns.map((c, i) => (
               <div
                 key={i}
@@ -298,6 +323,20 @@ export function Grid(props: Props) {
           })}
         </div>
       </div>
+      {rowPane && !detail && (
+        <RowPane
+          columns={columns}
+          rowNumber={selected ? rowOffset + selected.row + 1 : null}
+          values={selected ? (row(selected.row) ?? null)?.map((_, c) => shown(row(selected.row)!, selected.row, c)) ?? null : null}
+          edited={(c) => !!selected && edit?.pending(selected.row, c) !== undefined}
+          edit={
+            edit && !edit.blocked && selected
+              ? { onEdit: (c, v) => edit.onEdit(selected.row, c, v), nullable: edit.nullable }
+              : null
+          }
+          onClose={toggleRowPane}
+        />
+      )}
       {detail && <ValuePanel {...detail} onClose={() => setDetail(null)} />}
       {menu && (
         <div className="menu grid-menu" style={{ position: "fixed", left: menu.x, top: menu.y, right: "auto" }}>
@@ -309,6 +348,77 @@ export function Grid(props: Props) {
             </button>
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+/** The selected row as a form. Fields edit through the same pending edits as cells. */
+function RowPane(props: {
+  columns: ResultColumn[];
+  rowNumber: number | null;
+  values: (string | null)[] | null;
+  edited: (col: number) => boolean;
+  edit: { onEdit: (col: number, value: string | null) => void; nullable: boolean[] } | null;
+  onClose: () => void;
+}) {
+  const { columns, rowNumber, values, edited, edit, onClose } = props;
+  return (
+    <aside className="row-pane">
+      <header>
+        <span>{rowNumber === null ? "No row selected" : `Row ${rowNumber.toLocaleString()}`}</span>
+        <button className="ghost" onClick={onClose} title="Hide (⌘I)">
+          ✕
+        </button>
+      </header>
+      {values && (
+        <div className="row-pane-fields">
+          {columns.map((c, i) => (
+            <label key={`${rowNumber}-${i}`} className={`row-field ${edited(i) ? "edited" : ""}`}>
+              <span className="row-field-name">
+                {c.name} <span className="muted">{c.data_type}</span>
+              </span>
+              {edit ? (
+                <RowField value={values[i]} nullable={edit.nullable[i]} onCommit={(v) => edit.onEdit(i, v)} />
+              ) : (
+                <div className={`row-field-value ${values[i] === null ? "null" : ""}`}>{values[i] ?? "NULL"}</div>
+              )}
+            </label>
+          ))}
+        </div>
+      )}
+    </aside>
+  );
+}
+
+/** Commits on blur or ⌘↵; Esc puts back what was there. */
+function RowField({ value, nullable, onCommit }: { value: string | null; nullable: boolean; onCommit: (v: string | null) => void }) {
+  const [draft, setDraft] = useState(value ?? "");
+  useEffect(() => setDraft(value ?? ""), [value]);
+  const commit = () => {
+    if (draft !== (value ?? "") || (value === null && draft !== "")) onCommit(draft);
+  };
+  return (
+    <div className="row-field-edit">
+      <textarea
+        spellCheck={false}
+        value={draft}
+        placeholder={value === null ? "NULL" : ""}
+        rows={Math.min(8, Math.max(1, draft.split("\n").length))}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") setDraft(value ?? "");
+          else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) commit();
+          else return;
+          e.preventDefault();
+          e.stopPropagation();
+        }}
+      />
+      {nullable && value !== null && (
+        <button className="ghost set-null-field" onMouseDown={(e) => (e.preventDefault(), onCommit(null))} title="Set to NULL">
+          NULL
+        </button>
       )}
     </div>
   );
