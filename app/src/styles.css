@@ -316,3 +316,14 @@ button:disabled { opacity: 0.4; }
 .sql-preview { max-height: 320px; overflow: auto; margin: 0; padding: 10px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; font-family: var(--mono); font-size: 12px; white-space: pre-wrap; }
 .modal.wide { width: 640px; }
 .grid-cell.in-range { background: var(--accent-soft); }
+
+/* ⌘K */
+.palette-backdrop { place-items: start center; padding-top: 12vh; background: #0002; }
+.palette { width: 560px; max-width: calc(100vw - 32px); background: var(--bg); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 20px 60px #0004; overflow: hidden; }
+.palette input { width: 100%; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; padding: 14px 16px; font-size: 15px; background: transparent; color: var(--text); outline: none; }
+.palette-list { max-height: 360px; overflow: auto; padding: 4px; }
+.palette-item { display: flex; align-items: baseline; gap: 8px; padding: 6px 12px; border-radius: 6px; cursor: default; }
+.palette-item.active { background: var(--accent-soft); }
+.palette-hint { font-size: 12px; }
+.palette kbd { font: 11px var(--mono); color: var(--muted); }
+.palette .hint { padding: 8px 12px; margin: 0; }

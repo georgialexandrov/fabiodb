@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { AgentView, explainMode, formatMs } from "./AgentView";
+import { CommandPalette, type Command } from "./CommandPalette";
 import { ConnectionForm } from "./ConnectionForm";
 import { InsightsView } from "./InsightsView";
 import { QueryTab } from "./QueryTab";
@@ -47,6 +48,7 @@ export default function App() {
   const [agentLog, setAgentLog] = useState<AuditEntry[]>([]);
   const lastAgentId = useRef(0);
   const [theme, setTheme] = useState<Theme>(savedTheme);
+  const [palette, setPalette] = useState(false);
 
   useEffect(() => applyTheme(theme), [theme]);
 
@@ -186,6 +188,7 @@ export default function App() {
       else if (key === "t") newQuery();
       else if (key === "w" && current) closeTab(current);
       else if (key === "l" && e.shiftKey) setTheme(nextTheme);
+      else if (key === "k") setPalette((p) => !p);
       else return;
       e.preventDefault();
     }
@@ -218,6 +221,37 @@ export default function App() {
   }, [agentLog, connections]);
 
   const active = connections.find((c) => c.id === activeId) ?? null;
+
+  const commands: Command[] = [
+    ...(active
+      ? [
+          { id: "query", label: "New query", hint: active.name, shortcut: "⌘T", run: () => newQuery() },
+          ...(active.target.engine === "postgres" ? [{ id: "insights", label: "Insights", hint: active.name, run: openInsights }] : []),
+          { id: "agent", label: "Agent activity", hint: active.name, run: () => openAgent(active.id) },
+          { id: "edit", label: `Edit connection “${active.name}”`, run: () => setEditing(active) },
+        ]
+      : []),
+    ...(current ? [{ id: "close", label: "Close tab", shortcut: "⌘W", run: () => closeTab(current) }] : []),
+    { id: "new", label: "New Postgres connection", shortcut: "⌘N", run: () => setEditing(null) },
+    { id: "sqlite", label: "Open SQLite file", shortcut: "⌘O", run: () => chooseSqlite().catch((e) => setError(String(e))) },
+    ...(["system", "light", "dark"] as Theme[])
+      .filter((t) => t !== theme)
+      .map((t) => ({ id: `theme-${t}`, label: `Theme: ${THEME_LABELS[t]}`, shortcut: "⇧⌘L", run: () => setTheme(t) })),
+    ...connections
+      .filter((c) => c.id !== activeId)
+      .map((c) => ({
+        id: `conn-${c.id}`,
+        label: `${relations[c.id] ? "Switch to" : "Connect to"} ${c.name}`,
+        hint: c.target.engine === "postgres" ? "Postgres" : "SQLite",
+        run: () => activate(c),
+      })),
+    ...((activeId && relations[activeId]) || []).map((r) => ({
+      id: `rel-${r.schema}.${r.name}`,
+      label: r.schema === "public" || r.schema === "main" ? r.name : `${r.schema}.${r.name}`,
+      hint: r.kind === "table" ? "table" : r.kind === "view" ? "view" : "materialized view",
+      run: () => openTable(r),
+    })),
+  ];
   const activeTabs = tabs.filter((t) => t.connectionId === activeId);
   const currentTab = tabs.find((t) => t.id === current) ?? null;
 
@@ -397,6 +431,8 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {palette && <CommandPalette commands={commands} onClose={() => setPalette(false)} />}
 
       {editing !== undefined && (
         <ConnectionForm
