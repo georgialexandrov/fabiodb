@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { listen } from "@tauri-apps/api/event";
 import { AgentView, explainMode, formatMs } from "./AgentView";
 import { CommandPalette, type Command } from "./CommandPalette";
 import { ConnectionForm } from "./ConnectionForm";
@@ -209,6 +210,30 @@ export default function App() {
     if (typeof folder !== "string") return;
     setDiscovered({ folder, discovery: await api.discoverFolder(folder) });
   }
+
+  // Menu clicks (keyboard shortcuts reach the page first and never get here).
+  const onMenu = useRef<(id: string) => void>(() => {});
+  onMenu.current = (id: string) => {
+    const actions: Record<string, () => void> = {
+      "new-connection": () => setEditing(null),
+      "open-sqlite": () => chooseSqlite().catch((e) => setError(String(e))),
+      "scan-folder": () => scanFolder().catch((e) => setError(String(e))),
+      "new-query": () => newQuery(),
+      "close-tab": () => current && closeTab(current),
+      palette: () => setPalette(true),
+      switcher: () => setSwitcher(true),
+      databases: () => pickDatabase(),
+      "row-pane": () => document.dispatchEvent(new CustomEvent("fabio-row-pane")),
+      theme: () => setTheme(nextTheme),
+    };
+    actions[id]?.();
+  };
+  useEffect(() => {
+    const unlisten = listen<string>("menu", (e) => onMenu.current(e.payload));
+    return () => {
+      unlisten.then((f) => f());
+    };
+  }, []);
 
   useEffect(() => {
     const unlisten = getCurrentWebview().onDragDropEvent((e) => {

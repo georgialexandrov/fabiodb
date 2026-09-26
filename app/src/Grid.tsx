@@ -145,6 +145,13 @@ export function Grid(props: Props) {
     }
   }
 
+  // View ▸ Row Details from the menu bar: the grid on screen answers.
+  useEffect(() => {
+    const onToggle = () => scroller.current?.offsetParent && toggleRowPane();
+    document.addEventListener("fabio-row-pane", onToggle);
+    return () => document.removeEventListener("fabio-row-pane", onToggle);
+  });
+
   useEffect(() => {
     if (!menu) return;
     const close = (e: Event) => {

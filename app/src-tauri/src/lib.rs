@@ -1,3 +1,5 @@
+mod menu;
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -474,6 +476,8 @@ pub fn run() {
     STARTED.get_or_init(Instant::now);
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .menu(menu::build)
+        .on_menu_event(|app, event| menu::forward(app, event.id().as_ref()))
         .setup(|app| {
             let config = app.path().app_config_dir()?;
             let data = app.path().app_data_dir()?;
