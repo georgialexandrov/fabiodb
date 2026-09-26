@@ -10,6 +10,7 @@
 
 mod agent;
 mod audit;
+mod discover;
 mod edit;
 mod export;
 mod insights;
@@ -26,6 +27,7 @@ use serde::{Deserialize, Serialize};
 
 pub use agent::{Agent, AgentConnection, Limits, Passwords, ReadOnlyDb};
 pub use audit::{AuditEntry, AuditLog, NewAuditEntry, Source};
+pub use discover::{Discovered, Discovery, discover};
 pub use edit::{CellChange, ColumnValue, RowUpdate};
 pub use export::{ExportFormat, RowWriter, format_rows};
 pub use insights::{Activity, Insights, SeqScanTable, TopStatement, UnusedIndex};
