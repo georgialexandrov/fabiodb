@@ -93,6 +93,18 @@ impl Lite {
         .await
     }
 
+    pub async fn explain(&self, sql: &str) -> Result<crate::Plan> {
+        let sql = format!("EXPLAIN QUERY PLAN {sql}");
+        self.with(move |conn| {
+            let rows = conn
+                .prepare(&sql)?
+                .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(3)?)))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(crate::plan::from_sqlite_rows(rows))
+        })
+        .await
+    }
+
     pub async fn completion_schema(&self) -> Result<Vec<CompletionTable>> {
         let relations = self.relations().await?;
         self.with(move |conn| {

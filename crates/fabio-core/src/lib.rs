@@ -5,6 +5,8 @@
 //! engine's own format; NULL stays `None`.
 
 mod audit;
+mod insights;
+mod plan;
 mod postgres;
 mod sql;
 mod sqlite;
@@ -16,6 +18,8 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 pub use audit::{AuditEntry, AuditLog, NewAuditEntry, Source};
+pub use insights::{Activity, Insights, SeqScanTable, TopStatement, UnusedIndex};
+pub use plan::{Detail, Finding, Plan, PlanNode, Severity};
 pub use postgres::{PgTarget, SslMode};
 pub use store::{SavedConnection, Store};
 
@@ -80,6 +84,24 @@ impl Db {
         match self {
             Db::Postgres(pg) => pg.describe(relation).await,
             Db::Sqlite(lite) => lite.describe(relation).await,
+        }
+    }
+
+    /// The plan for one statement. With `analyze`, the statement really runs —
+    /// inside a transaction that is always rolled back.
+    pub async fn explain(&self, sql: &str, analyze: bool) -> Result<Plan> {
+        let sql = sql.trim().trim_end_matches(';');
+        match self {
+            Db::Postgres(pg) => pg.explain(sql, analyze).await,
+            Db::Sqlite(lite) => lite.explain(sql).await,
+        }
+    }
+
+    /// What the server knows about itself: activity, top statements, index use.
+    pub async fn insights(&self) -> Result<Insights> {
+        match self {
+            Db::Postgres(pg) => insights::postgres(pg.client()).await,
+            Db::Sqlite(_) => Err(Error::Invalid("SQLite keeps no statistics to show here.".into())),
         }
     }
 

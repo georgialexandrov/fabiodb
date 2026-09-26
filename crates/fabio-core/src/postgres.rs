@@ -133,6 +133,29 @@ impl Pg {
         Ok(QueryResult { columns, rows, truncated, elapsed_ms: ms(started) })
     }
 
+    pub(crate) fn client(&self) -> &Client {
+        &self.client
+    }
+
+    pub async fn explain(&self, sql: &str, analyze: bool) -> Result<crate::Plan> {
+        // VERBOSE is what puts the schema into the JSON.
+        let options = if analyze { "ANALYZE, BUFFERS, VERBOSE, FORMAT JSON" } else { "VERBOSE, FORMAT JSON" };
+        // ANALYZE executes the statement; the rollback makes that harmless.
+        self.client.batch_execute("BEGIN").await?;
+        let explained = self.client.simple_query(&format!("EXPLAIN ({options}) {sql}")).await;
+        let rolled_back = self.client.batch_execute("ROLLBACK").await;
+        let messages = explained?;
+        rolled_back?;
+        let raw = messages
+            .iter()
+            .find_map(|m| match m {
+                SimpleQueryMessage::Row(r) => r.get(0).map(str::to_owned),
+                _ => None,
+            })
+            .ok_or_else(|| Error::Invalid("EXPLAIN returned nothing".into()))?;
+        crate::plan::from_postgres_json(raw, analyze)
+    }
+
     pub fn canceller(&self) -> Canceller {
         Canceller::Postgres(self.client.cancel_token(), self.tls.clone())
     }
