@@ -1,6 +1,9 @@
 # Fabio
 
-Postgres + SQLite desktop client. Tauri 2 + Rust core + React. Plan and phases: `PLAN.md`.
+Postgres + SQLite desktop client. Tauri 2 + Rust core + React.
+
+**Start here:** `STATUS.md` (what's done, what's left, gotchas), then `PLAN.md`
+(phases, budgets) and `VOICE.md` (any user-visible text).
 
 ## Rules
 
