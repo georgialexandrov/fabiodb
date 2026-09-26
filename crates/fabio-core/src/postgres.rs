@@ -21,7 +21,7 @@ pub enum SslMode {
     Require,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PgTarget {
     pub host: String,
     pub port: u16,

@@ -21,3 +21,12 @@ Notes:
 - Almost all startup is in the webview (269 of 283 ms), not Rust. Levers if it
   regresses: smaller JS (Preact, code-split the editor/grid), show the window
   only after first paint, inline critical CSS.
+
+## 2026-09-26 — Phase 1 (browse UI, virtualized grid, keychain, dialog plugin)
+
+| Metric | Result | Budget | |
+|---|---|---|---|
+| Cold start, median of 10 | 283 ms (max 310) | < 300 ms | ✅ unchanged from Phase 0 |
+| Idle memory, RSS | 188 MB | < 150 MB | ❌ same caveat as above |
+| Bundle | 6.3 MB | < 20 MB | ✅ |
+| Open `track` first page (200 rows), in-app | 1.1 ms | < 100 ms | ✅ |

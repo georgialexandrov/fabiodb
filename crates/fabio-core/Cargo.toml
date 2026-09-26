@@ -9,8 +9,9 @@ native-tls = "0.2.18"
 postgres-native-tls = "0.5.3"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
 thiserror = "2.0.21"
-tokio = { version = "1.53.1", features = ["rt"] }
+tokio = { version = "1.53.1", features = ["macros", "rt"] }
 tokio-postgres = "0.7.18"
 
 [dev-dependencies]

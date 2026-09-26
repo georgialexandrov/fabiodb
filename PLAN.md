@@ -46,7 +46,7 @@ Mascot: Fabio the marmot — sits by the burrow, whistles when something is wron
 | SQL parsing | `pg_query` crate (libpg_query) for Postgres; `sqlparser-rs` (SQLite dialect) for SQLite | The real Postgres parser — no regex guessing; pg_query can't parse SQLite |
 | Secrets | OS keychain (`keyring` crate) | No passwords in config files |
 | Frontend | React + TypeScript + Vite | Already known; lowest ramp |
-| Grid | Glide Data Grid (canvas) | Millions of rows without DOM cost |
+| Grid | `@tanstack/react-virtual` over DOM rows | Only on-screen rows exist; ~15 KB vs Glide's ~200 KB, which the start budget can't afford. Revisit Glide if 100k-row scroll misses 60 fps |
 | Editor | CodeMirror 6 | Light, extensible, good SQL mode |
 | Autocomplete | schema-aware completer (v1) → `postgres-language-server` sidecar (v2) | Ship simple first, swap in LSP when the simple one hurts |
 | Formatter | `sql-formatter` (v1) | Preserves comments; `pg_query` deparse drops them |
@@ -88,8 +88,9 @@ fabio/
 - **Shared audit log** — SQLite in the app data dir. Every statement (human or
   agent) is logged with source, SQL, duration, rows, error. The UI tails it; that
   is how agent activity becomes visible.
-- **Paging:** keyset pagination when the table has a PK, `LIMIT/OFFSET` fallback
-  otherwise. Results stream to the UI over Tauri channels in chunks.
+- **Paging:** `LIMIT/OFFSET`, ordered by the sort column then the PK so pages are
+  stable. Keyset pagination is deferred until a real table makes deep offsets
+  slow — Chinook can't show the difference. Results stream to the UI over Tauri channels in chunks.
 - **Cancellation:** every running query has a cancel token (`pg_cancel_backend`
   via the client's cancel handle). Esc cancels.
 
@@ -103,7 +104,7 @@ current one's exit criteria hold.
 - Measure cold start and bundle size on this Mac. Record them in `BENCHMARKS.md`.
 - **Exit:** numbers exist. If Tauri misses the start budget here, stop and rethink.
 
-### Phase 1 — Browse (weekend 1)
+### Phase 1 — Browse (weekend 1) — ✅ built 2026-09-26; seen working on screen: sidebar, estimates, paged grid. Not yet eyeballed: sort, filters, Structure, connection form, drag-drop
 - Connection manager: add/edit/delete, test connection, secrets in keychain, SSL modes.
 - Sidebar: schemas → tables/views/matviews, with row estimates (`pg_class.reltuples`).
 - Table view: paged grid, sort by column, simple filter row (`col op value`).

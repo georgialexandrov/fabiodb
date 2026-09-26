@@ -7,14 +7,16 @@
 mod postgres;
 mod sql;
 mod sqlite;
+mod store;
 
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
 pub use postgres::{PgTarget, SslMode};
+pub use store::{SavedConnection, Store};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "engine", rename_all = "lowercase")]
 pub enum Target {
     Postgres(PgTarget),
