@@ -286,6 +286,7 @@ export function QueryTab({ connectionId, engine, schema, sql, onSqlChange, visib
               rowCount={result.rows.length}
               row={(i) => result.rows[i]}
               sample={result.rows}
+              onNotice={setNotice}
             />
           ) : (
             <div className="grid-wrap" />

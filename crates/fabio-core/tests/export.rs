@@ -166,3 +166,12 @@ fn json_keeps_column_order_and_repeated_names() {
     let json = format_rows(ExportFormat::Json, &columns, &[vec![v("1"), v("2"), v("3")]], None).unwrap();
     assert_eq!(json, r#"[{"z":"1","id":"2","id":"3"}]"#);
 }
+
+#[test]
+fn tsv_is_for_pasting_into_spreadsheets() {
+    let (columns, rows) = sample();
+    let tsv =
+        format_rows(ExportFormat::Tsv, &columns[..2], &rows.iter().map(|r| r[..2].to_vec()).collect::<Vec<_>>(), None)
+            .unwrap();
+    assert_eq!(tsv, "id\tname\n1\tplain\n2\t\"comma, \"\"quote\"\"\nnewline | pipe\"\n3\t\n");
+}

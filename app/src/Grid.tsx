@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { isNumeric, type ResultColumn, type Rows, type Sort } from "./api";
+import { api, isNumeric, plural, type ExportFormat, type RelationRef, type ResultColumn, type Rows, type Sort } from "./api";
 
 const ROW_HEIGHT = 26;
 const CHAR_WIDTH = 7.4;
@@ -24,7 +24,20 @@ type Props = {
   rowOffset?: number;
   /** Cell editing, for tables with a primary key. */
   edit?: GridEdit;
+  /** The table these rows come from; enables "Copy as INSERT". */
+  table?: RelationRef;
+  /** Says what a copy did, in the view's status line. */
+  onNotice?: (message: string) => void;
 };
+
+type Cell = { row: number; col: number };
+
+const COPY_FORMATS: { format: ExportFormat; label: string }[] = [
+  { format: "csv", label: "CSV" },
+  { format: "markdown", label: "Markdown" },
+  { format: "json", label: "JSON" },
+  { format: "insert", label: "INSERT statements" },
+];
 
 export type GridEdit = {
   /** The unsaved value of a cell; `undefined` when it hasn't been edited. */
@@ -37,9 +50,13 @@ export type GridEdit = {
 };
 
 /** Virtualized, random-access grid. Only on-screen rows are rendered. */
-export function Grid({ columns, rowCount, row, sample, onRange, sort, onSort, scrollTo, rowOffset = 0, edit }: Props) {
+export function Grid(props: Props) {
+  const { columns, rowCount, row, sample, onRange, sort, onSort, scrollTo, rowOffset = 0, edit, table, onNotice } = props;
   const scroller = useRef<HTMLDivElement>(null);
-  const [selected, setSelected] = useState<{ row: number; col: number } | null>(null);
+  // `selected` is the active cell; with `anchor` it spans a rectangle (shift-click, shift-arrows).
+  const [selected, setSelected] = useState<Cell | null>(null);
+  const [anchor, setAnchor] = useState<Cell | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [editing, setEditing] = useState<{ row: number; col: number; draft: string } | null>(null);
   const [detail, setDetail] = useState<{ column: ResultColumn; value: string | null } | null>(null);
 
@@ -66,8 +83,60 @@ export function Grid({ columns, rowCount, row, sample, onRange, sort, onSort, sc
 
   useEffect(() => {
     setSelected(null);
+    setAnchor(null);
     setEditing(null);
   }, [columns]);
+
+  const range = selected && {
+    top: Math.min(selected.row, (anchor ?? selected).row),
+    bottom: Math.max(selected.row, (anchor ?? selected).row),
+    left: Math.min(selected.col, (anchor ?? selected).col),
+    right: Math.max(selected.col, (anchor ?? selected).col),
+  };
+  const inRange = (r: number, c: number) =>
+    !!range && r >= range.top && r <= range.bottom && c >= range.left && c <= range.right;
+
+  function select(at: Cell, extend: boolean) {
+    if (!extend || !selected) setAnchor(at);
+    else if (!anchor) setAnchor(selected);
+    setSelected(at);
+  }
+
+  /** The selected rectangle, loaded rows only, in `format`. */
+  async function copy(format: ExportFormat) {
+    if (!range) return;
+    const cols = columns.slice(range.left, range.right + 1);
+    const rows: Row[] = [];
+    let missing = 0;
+    for (let i = range.top; i <= range.bottom; i++) {
+      const r = row(i);
+      if (!r) missing++;
+      else rows.push(cols.map((_, j) => shown(r, i, range.left + j)));
+    }
+    const single = rows.length === 1 && cols.length === 1;
+    const text =
+      single && format === "tsv" ? (rows[0][0] ?? "NULL") : await api.copyRows(cols, rows, format, table ?? null);
+    await navigator.clipboard.writeText(text);
+    if (!single || format !== "tsv") {
+      const skipped = missing ? `; ${plural(missing, "row")} not loaded yet were left out` : "";
+      onNotice?.(`Copied ${plural(rows.length, "row")} × ${plural(cols.length, "column")}${skipped}`);
+    }
+  }
+
+  useEffect(() => {
+    if (!menu) return;
+    const close = (e: Event) => {
+      if (e instanceof KeyboardEvent && e.key !== "Escape") return;
+      if (e instanceof MouseEvent && (e.target as HTMLElement).closest(".grid-menu")) return;
+      setMenu(null);
+    };
+    window.addEventListener("mousedown", close);
+    window.addEventListener("keydown", close);
+    return () => {
+      window.removeEventListener("mousedown", close);
+      window.removeEventListener("keydown", close);
+    };
+  }, [menu]);
 
   /** What the cell shows: the unsaved edit if there is one. */
   const shown = (r: Row, rowIndex: number, col: number) => {
@@ -88,13 +157,13 @@ export function Grid({ columns, rowCount, row, sample, onRange, sort, onSort, sc
     setEditing(null);
   }
 
-  function move(dRow: number, dCol: number) {
+  function move(dRow: number, dCol: number, extend: boolean) {
     if (!selected) return;
     const next = {
       row: Math.min(Math.max(0, selected.row + dRow), rowCount - 1),
       col: Math.min(Math.max(0, selected.col + dCol), columns.length - 1),
     };
-    setSelected(next);
+    select(next, extend);
     virtualizer.scrollToIndex(next.row, { align: "auto" });
   }
 
@@ -106,14 +175,14 @@ export function Grid({ columns, rowCount, row, sample, onRange, sort, onSort, sc
       if (target.closest("input, textarea, select, .cm-editor")) return;
       const r = row(selected.row);
       if ((e.metaKey || e.ctrlKey) && e.key === "c") {
-        if (window.getSelection()?.toString() || !r) return;
-        navigator.clipboard.writeText(shown(r, selected.row, selected.col) ?? "NULL");
+        if (window.getSelection()?.toString()) return;
+        copy("tsv");
       } else if (e.metaKey || e.ctrlKey || e.altKey) {
         return;
-      } else if (e.key === "ArrowUp") move(-1, 0);
-      else if (e.key === "ArrowDown") move(1, 0);
-      else if (e.key === "ArrowLeft") move(0, -1);
-      else if (e.key === "ArrowRight") move(0, 1);
+      } else if (e.key === "ArrowUp") move(-1, 0, e.shiftKey);
+      else if (e.key === "ArrowDown") move(1, 0, e.shiftKey);
+      else if (e.key === "ArrowLeft") move(0, -1, e.shiftKey);
+      else if (e.key === "ArrowRight") move(0, 1, e.shiftKey);
       else if (e.key === "Enter" && edit) startEdit(selected);
       else if (e.key === " " && r) setDetail({ column: columns[selected.col], value: shown(r, selected.row, selected.col) });
       else return;
@@ -184,9 +253,14 @@ export function Grid({ columns, rowCount, row, sample, onRange, sort, onSort, sc
                   return (
                     <div
                       key={c}
-                      className={`${cellClass(column, value, selected?.row === item.index && selected.col === c)}${edited ? " edited" : ""}`}
+                      className={`${cellClass(column, value, selected?.row === item.index && selected.col === c)}${edited ? " edited" : ""}${inRange(item.index, c) ? " in-range" : ""}`}
                       style={{ width: widths[c] }}
-                      onClick={() => setSelected(at)}
+                      onClick={(e) => select(at, e.shiftKey)}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        if (!inRange(item.index, c)) select(at, false);
+                        setMenu({ x: e.clientX, y: e.clientY });
+                      }}
                       onDoubleClick={() => (edit ? startEdit(at) : setDetail({ column, value }))}
                       title={edited ? `was ${r[c] ?? "NULL"}` : undefined}
                     >
@@ -200,6 +274,17 @@ export function Grid({ columns, rowCount, row, sample, onRange, sort, onSort, sc
         </div>
       </div>
       {detail && <ValuePanel {...detail} onClose={() => setDetail(null)} />}
+      {menu && (
+        <div className="menu grid-menu" style={{ position: "fixed", left: menu.x, top: menu.y, right: "auto" }}>
+          <button onClick={() => (setMenu(null), copy("tsv"))}>Copy</button>
+          <div className="menu-separator" />
+          {COPY_FORMATS.filter((f) => f.format !== "insert" || table).map((f) => (
+            <button key={f.format} onClick={() => (setMenu(null), copy(f.format).catch((e) => onNotice?.(String(e))))}>
+              Copy as {f.label}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

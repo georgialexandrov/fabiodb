@@ -351,6 +351,8 @@ export function TableView({ connectionId, relation, onOpen }: Props) {
             onSort={setSort}
             scrollTo={jump}
             edit={edit}
+            table={relation}
+            onNotice={setNotice}
           />
         )
       ) : (

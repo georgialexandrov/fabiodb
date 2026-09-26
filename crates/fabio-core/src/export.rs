@@ -17,6 +17,8 @@ use crate::{Error, RelationRef, Result, ResultColumn};
 #[serde(rename_all = "lowercase")]
 pub enum ExportFormat {
     Csv,
+    /// Tab-separated, for pasting into spreadsheets. NULL and "" are both empty.
+    Tsv,
     Json,
     Markdown,
     /// One `INSERT` per row; needs the table name.
@@ -81,6 +83,10 @@ impl<W: Write> RowWriter<W> {
                 let header: Vec<_> = cols.iter().map(|(n, _)| csv_field(Some(n))).collect();
                 write!(out, "{}\r\n", header.join(","))?;
             }
+            ExportFormat::Tsv => {
+                let header: Vec<_> = cols.iter().map(|(n, _)| tsv_field(Some(n))).collect();
+                writeln!(out, "{}", header.join("\t"))?;
+            }
             ExportFormat::Json => out.write_all(b"[")?,
             ExportFormat::Markdown => {
                 let names: Vec<_> = cols.iter().map(|(n, _)| markdown_cell(n)).collect();
@@ -107,6 +113,10 @@ impl<W: Write> RowWriter<W> {
             ExportFormat::Csv => {
                 let fields: Vec<_> = values.map(|(_, v)| csv_field(v.as_deref())).collect();
                 write!(self.out, "{}\r\n", fields.join(","))?;
+            }
+            ExportFormat::Tsv => {
+                let fields: Vec<_> = values.map(|(_, v)| tsv_field(v.as_deref())).collect();
+                writeln!(self.out, "{}", fields.join("\t"))?;
             }
             ExportFormat::Json => {
                 // Written by hand: a map would sort the keys and drop a
@@ -178,6 +188,15 @@ fn csv_field(value: Option<&str>) -> String {
         None => String::new(),
         Some("") => "\"\"".into(),
         Some(v) if v.contains([',', '"', '\n', '\r']) => format!("\"{}\"", v.replace('"', "\"\"")),
+        Some(v) => v.to_owned(),
+    }
+}
+
+/// Quoted only when it holds a tab, quote or line break, as spreadsheets expect.
+fn tsv_field(value: Option<&str>) -> String {
+    match value {
+        None => String::new(),
+        Some(v) if v.contains(['\t', '"', '\n', '\r']) => format!("\"{}\"", v.replace('"', "\"\"")),
         Some(v) => v.to_owned(),
     }
 }

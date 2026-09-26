@@ -120,7 +120,7 @@ export type ColumnValue = { column: string; value: string | null };
 /** `old` is what the grid showed; the save only applies if the row still has it. */
 export type RowUpdate = { key: ColumnValue[]; changes: { column: string; old: string | null; new: string | null }[] };
 
-export type ExportFormat = "csv" | "json" | "markdown" | "insert";
+export type ExportFormat = "csv" | "tsv" | "json" | "markdown" | "insert";
 
 export type CompletionTable = { schema: string; name: string; columns: string[] };
 
