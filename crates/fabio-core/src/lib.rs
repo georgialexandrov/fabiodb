@@ -69,6 +69,15 @@ impl Db {
         }
     }
 
+    /// The server or network ended the connection (restart, sleep, dropped
+    /// Wi-Fi); it has to be opened again.
+    pub fn is_closed(&self) -> bool {
+        match self {
+            Db::Postgres(pg) => pg.client().is_closed(),
+            Db::Sqlite(_) => false,
+        }
+    }
+
     /// Something that can stop the statement currently running on this connection.
     pub fn canceller(&self) -> Canceller {
         match self {

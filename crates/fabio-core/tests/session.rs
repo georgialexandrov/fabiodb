@@ -107,3 +107,21 @@ async fn postgres_error_reports_its_position() {
 
     assert_eq!(err.position(), Some(8), "{err}");
 }
+
+#[tokio::test]
+async fn postgres_knows_when_its_connection_is_gone() {
+    let db = postgres().await;
+    assert!(!db.is_closed());
+    let pid = db.query("select pg_backend_pid()").await.unwrap().rows[0][0].clone().unwrap();
+
+    postgres().await.query(&format!("select pg_terminate_backend({pid})")).await.unwrap();
+    // The next use fails, and from then on the connection says it's closed.
+    assert!(db.query("select 1").await.is_err());
+    for _ in 0..50 {
+        if db.is_closed() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(db.is_closed());
+}

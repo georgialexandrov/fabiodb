@@ -147,6 +147,9 @@ impl Pg {
             .dbname(&target.database)
             .application_name("fabio")
             .connect_timeout(Duration::from_secs(5))
+            // Notice a dead peer (sleep, network change) in about a minute, not hours.
+            .keepalives(true)
+            .keepalives_idle(Duration::from_secs(30))
             .ssl_mode(match target.ssl {
                 SslMode::Disable => tokio_postgres::config::SslMode::Disable,
                 SslMode::Prefer => tokio_postgres::config::SslMode::Prefer,

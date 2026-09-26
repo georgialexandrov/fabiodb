@@ -27,7 +27,13 @@ struct App {
 struct Session {
     connection_id: String,
     db: Arc<Db>,
+    /// Restored when the connection has to be reopened.
+    writable: bool,
 }
+
+/// Said when a query tab's connection died (sleep, network, server restart).
+const LOST: &str =
+    "The connection was lost and has been reopened. Anything not committed was rolled back; run the statement again.";
 
 /// A failed statement, with where it failed when the database says.
 #[derive(Serialize)]
@@ -95,6 +101,64 @@ impl App {
     fn db(&self, id: &str) -> Res<Arc<Db>> {
         self.open.lock().unwrap().get(id).cloned().ok_or_else(|| "connection is not open".to_string())
     }
+
+    /// Runs a browse call; a connection that died (sleep, network) is reopened
+    /// and the call tried once more. Browsing holds no state worth losing.
+    async fn browsing<T, F>(&self, id: &str, call: impl Fn(Arc<Db>) -> F) -> Res<T>
+    where
+        F: std::future::Future<Output = fabio_core::Result<T>> + Send,
+    {
+        let mut db = self.db(id)?;
+        if db.is_closed() {
+            db = self.reopen(id).await?;
+        }
+        match call(db.clone()).await {
+            Err(_) if db.is_closed() => call(self.reopen(id).await?).await.map_err(err),
+            result => result.map_err(err),
+        }
+    }
+
+    async fn reopen(&self, id: &str) -> Res<Arc<Db>> {
+        let db = Arc::new(self.open_db(id).await?);
+        self.open.lock().unwrap().insert(id.to_owned(), db.clone());
+        Ok(db)
+    }
+
+    /// A query tab's connection, reopened (with its write mode) if it died.
+    /// Reopening is reported, not hidden: its transaction is gone.
+    async fn live_session(&self, id: &str) -> Result<(String, Arc<Db>), QueryError> {
+        let (connection_id, db) = self.session(id).map_err(|message| QueryError { message, position: None })?;
+        if db.is_closed() {
+            self.reopen_session(id).await?;
+            return Err(QueryError { message: LOST.into(), position: None });
+        }
+        Ok((connection_id, db))
+    }
+
+    async fn reopen_session(&self, id: &str) -> Result<(), QueryError> {
+        let fail = |message: String| QueryError { message, position: None };
+        let (connection_id, writable) = {
+            let sessions = self.sessions.lock().unwrap();
+            let s = sessions.get(id).ok_or_else(|| fail("query tab is closed".into()))?;
+            (s.connection_id.clone(), s.writable)
+        };
+        let db = self.open_db(&connection_id).await.map_err(|e| fail(format!("The connection was lost: {e}")))?;
+        if writable {
+            db.set_writable(true).await.map_err(|e| fail(e.to_string()))?;
+        }
+        if let Some(s) = self.sessions.lock().unwrap().get_mut(id) {
+            s.db = Arc::new(db);
+        }
+        Ok(())
+    }
+}
+
+/// A statement failed; if that's because the connection died, reopen it and say so.
+async fn statement_error(app: &App, id: &str, db: &Db, e: fabio_core::Error) -> QueryError {
+    if db.is_closed() && app.reopen_session(id).await.is_ok() {
+        return QueryError { message: format!("{e}. {LOST}"), position: None };
+    }
+    QueryError { message: e.to_string(), position: e.position() }
 }
 
 #[tauri::command]
@@ -177,17 +241,18 @@ fn disconnect(app: State<App>, id: String) {
 /// Databases on the server of an open connection, for ⌘D.
 #[tauri::command]
 async fn databases(app: State<'_, App>, id: String) -> Res<Vec<String>> {
-    app.db(&id)?.databases().await.map_err(err)
+    app.browsing(&id, |db| async move { db.databases().await }).await
 }
 
 #[tauri::command]
 async fn relations(app: State<'_, App>, id: String) -> Res<Vec<Relation>> {
-    app.db(&id)?.relations().await.map_err(err)
+    app.browsing(&id, |db| async move { db.relations().await }).await
 }
 
 #[tauri::command]
 async fn describe(app: State<'_, App>, id: String, relation: RelationRef) -> Res<TableInfo> {
-    app.db(&id)?.describe(&relation).await.map_err(err)
+    let relation = &relation;
+    app.browsing(&id, |db| async move { db.describe(relation).await }).await
 }
 
 /// Exact counts get this long before falling back to the planner's estimate.
@@ -195,12 +260,15 @@ const COUNT_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[tauri::command]
 async fn count(app: State<'_, App>, id: String, relation: RelationRef, filters: Vec<Filter>) -> Res<Count> {
-    app.db(&id)?.count(&relation, &filters, COUNT_TIMEOUT).await.map_err(err)
+    let relation = &relation;
+    let filters = &filters;
+    app.browsing(&id, |db| async move { db.count(relation, filters, COUNT_TIMEOUT).await }).await
 }
 
 #[tauri::command]
 async fn page(app: State<'_, App>, id: String, request: PageRequest) -> Res<Page> {
-    app.db(&id)?.page(&request).await.map_err(err)
+    let request = &request;
+    app.browsing(&id, |db| async move { db.page(request).await }).await
 }
 
 /// Streams a whole table (under the grid's sort and filters) to a file, on its
@@ -246,7 +314,9 @@ async fn preview_updates(
     relation: RelationRef,
     updates: Vec<RowUpdate>,
 ) -> Res<Vec<String>> {
-    app.db(&id)?.update_statements(&relation, &updates).await.map_err(err)
+    let relation = &relation;
+    let updates = &updates;
+    app.browsing(&id, |db| async move { db.update_statements(relation, updates).await }).await
 }
 
 /// Saves cell edits in one transaction on a writable connection of its own
@@ -276,7 +346,7 @@ async fn apply_updates(app: State<'_, App>, id: String, relation: RelationRef, u
 
 #[tauri::command]
 async fn completion_schema(app: State<'_, App>, id: String) -> Res<Vec<CompletionTable>> {
-    app.db(&id)?.completion_schema().await.map_err(err)
+    app.browsing(&id, |db| async move { db.completion_schema().await }).await
 }
 
 /// Opens a query tab's own connection; returns the session id.
@@ -284,7 +354,7 @@ async fn completion_schema(app: State<'_, App>, id: String) -> Res<Vec<Completio
 async fn open_session(app: State<'_, App>, connection_id: String) -> Res<String> {
     let db = Arc::new(app.open_db(&connection_id).await?);
     let id = format!("{connection_id}:{:x}", Instant::now().duration_since(*STARTED.get().unwrap()).as_nanos());
-    app.sessions.lock().unwrap().insert(id.clone(), Session { connection_id, db });
+    app.sessions.lock().unwrap().insert(id.clone(), Session { connection_id, db, writable: false });
     Ok(id)
 }
 
@@ -295,7 +365,12 @@ fn close_session(app: State<App>, id: String) {
 
 #[tauri::command]
 async fn set_write_mode(app: State<'_, App>, id: String, writable: bool) -> Res<()> {
-    app.session(&id)?.1.set_writable(writable).await.map_err(err)
+    let db = app.live_session(&id).await.map_err(|e| e.message)?.1;
+    db.set_writable(writable).await.map_err(err)?;
+    if let Some(s) = app.sessions.lock().unwrap().get_mut(&id) {
+        s.writable = writable;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -306,7 +381,7 @@ async fn cancel(app: State<'_, App>, id: String) -> Res<()> {
 /// Runs a statement in a query tab and records it in the audit log.
 #[tauri::command]
 async fn run_statement(app: State<'_, App>, id: String, sql: String) -> Result<QueryResult, QueryError> {
-    let (connection_id, db) = app.session(&id).map_err(|message| QueryError { message, position: None })?;
+    let (connection_id, db) = app.live_session(&id).await?;
     let started = Instant::now();
     let result = db.query(&sql).await;
     let entry = NewAuditEntry {
@@ -320,14 +395,17 @@ async fn run_statement(app: State<'_, App>, id: String, sql: String) -> Result<Q
     if let Err(e) = app.audit.record(&entry) {
         eprintln!("audit log: {e}");
     }
-    result.map_err(|e| QueryError { message: e.to_string(), position: e.position() })
+    match result {
+        Ok(r) => Ok(r),
+        Err(e) => Err(statement_error(&app, &id, &db, e).await),
+    }
 }
 
 /// Explains a statement in a query tab. With `analyze` it really runs (rolled
 /// back), so it is logged like any other statement.
 #[tauri::command]
 async fn explain(app: State<'_, App>, id: String, sql: String, analyze: bool) -> Result<Plan, QueryError> {
-    let (connection_id, db) = app.session(&id).map_err(|message| QueryError { message, position: None })?;
+    let (connection_id, db) = app.live_session(&id).await?;
     let started = Instant::now();
     let plan = db.explain(&sql, analyze).await;
     let entry = NewAuditEntry {
@@ -341,12 +419,15 @@ async fn explain(app: State<'_, App>, id: String, sql: String, analyze: bool) ->
     if let Err(e) = app.audit.record(&entry) {
         eprintln!("audit log: {e}");
     }
-    plan.map_err(|e| QueryError { message: e.to_string(), position: e.position() })
+    match plan {
+        Ok(p) => Ok(p),
+        Err(e) => Err(statement_error(&app, &id, &db, e).await),
+    }
 }
 
 #[tauri::command]
 async fn insights(app: State<'_, App>, id: String) -> Res<Insights> {
-    app.db(&id)?.insights().await.map_err(err)
+    app.browsing(&id, |db| async move { db.insights().await }).await
 }
 
 #[tauri::command]
