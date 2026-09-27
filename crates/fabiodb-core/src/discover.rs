@@ -37,9 +37,9 @@ pub struct Discovery {
 
 pub fn discover(dir: &Path) -> Result<Discovery> {
     let mut discovery = Discovery::default();
-    let mut vars = read_env_file(&dir.join(".env"));
-    // As in Compose, the shell's environment wins over .env.
-    vars.extend(std::env::vars());
+    // Do not inherit Fabio's process environment here. A Compose file is
+    // project input and must not be able to interpolate unrelated app secrets.
+    let vars = read_env_file(&dir.join(".env"));
     for file in COMPOSE_FILES.iter().map(|f| dir.join(f)).filter(|p| p.is_file()) {
         match compose_services(dir, &file, &vars) {
             Ok(found) => discovery.found.extend(found),
@@ -113,7 +113,10 @@ fn service_env(dir: &Path, service: &Yaml, vars: &HashMap<String, String>) -> Ha
     for f in env_files {
         let path = f.as_str().or_else(|| f["path"].as_str());
         if let Some(path) = path {
-            env.extend(read_env_file(&dir.join(interpolate(path, vars))));
+            let path = interpolate(path, vars);
+            if let Some(path) = project_file(dir, &path) {
+                env.extend(read_env_file(&path));
+            }
         }
     }
     match &service["environment"] {
@@ -134,6 +137,18 @@ fn service_env(dir: &Path, service: &Yaml, vars: &HashMap<String, String>) -> Ha
         _ => {}
     }
     env
+}
+
+/// Compose files are untrusted project input. An `env_file` may only resolve
+/// inside the selected project, including after following symlinks.
+fn project_file(root: &Path, relative: &str) -> Option<PathBuf> {
+    let relative = Path::new(relative);
+    if relative.is_absolute() {
+        return None;
+    }
+    let root = root.canonicalize().ok()?;
+    let file = root.join(relative).canonicalize().ok()?;
+    file.starts_with(&root).then_some(file)
 }
 
 /// The host side of the mapping to `container_port`, from short ("[ip:]host:container")

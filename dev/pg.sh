@@ -25,6 +25,20 @@ load() {
     "$psql" -d postgres -q -v ON_ERROR_STOP=1 -f "$DIR/data/Chinook_PostgreSql.sql" >/dev/null
     "$psql" -d chinook -qc "create extension if not exists pg_stat_statements"
   fi
+  # Agent tests use a deliberately unprivileged login. The product refuses
+  # superusers and server-file/program roles for MCP access.
+  "$psql" -d postgres -q -v ON_ERROR_STOP=1 <<'SQL'
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'fabio_agent') THEN
+    CREATE ROLE fabio_agent LOGIN;
+  END IF;
+END $$;
+GRANT CONNECT ON DATABASE chinook TO fabio_agent;
+SQL
+  "$psql" -d chinook -q -v ON_ERROR_STOP=1 <<'SQL'
+GRANT USAGE ON SCHEMA public TO fabio_agent;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO fabio_agent;
+SQL
   # Tests expect track analyzed and genre not. Autovacuum gets to track only
   # eventually (a fresh CI server often hadn't), and never to genre: too small.
   "$psql" -d chinook -qc "analyze track"
@@ -38,6 +52,10 @@ insert into perf.big select g, g % 1000, md5(g::text) from generate_series(1, 50
 analyze perf.big;
 SQL
   fi
+  "$psql" -d chinook -q -v ON_ERROR_STOP=1 <<'SQL'
+GRANT USAGE ON SCHEMA perf TO fabio_agent;
+GRANT SELECT ON ALL TABLES IN SCHEMA perf TO fabio_agent;
+SQL
   echo "postgres://$PGUSER@$PGHOST:$PGPORT/chinook"
 }
 

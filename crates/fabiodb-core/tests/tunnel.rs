@@ -55,3 +55,11 @@ async fn tunnels_share_one_ssh_and_carry_the_right_arguments() {
     let err = Db::open(&through("fail.example")).await.err().unwrap();
     assert!(err.to_string().contains("Permission denied (publickey)"), "{err}");
 }
+
+#[tokio::test]
+async fn ssh_destination_cannot_inject_options() {
+    for host in ["-oProxyCommand=touch /tmp/nope", "bad host"] {
+        let err = Db::open(&through(host)).await.err().unwrap();
+        assert!(err.to_string().contains("not valid"), "{err}");
+    }
+}

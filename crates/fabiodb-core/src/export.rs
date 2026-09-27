@@ -80,11 +80,11 @@ impl<W: Write> RowWriter<W> {
         let mut insert_prefix = String::new();
         match format {
             ExportFormat::Csv => {
-                let header: Vec<_> = cols.iter().map(|(n, _)| csv_field(Some(n))).collect();
+                let header: Vec<_> = cols.iter().map(|(n, _)| csv_field(Kind::Text, Some(n))).collect();
                 write!(out, "{}\r\n", header.join(","))?;
             }
             ExportFormat::Tsv => {
-                let header: Vec<_> = cols.iter().map(|(n, _)| tsv_field(Some(n))).collect();
+                let header: Vec<_> = cols.iter().map(|(n, _)| tsv_field(Kind::Text, Some(n))).collect();
                 writeln!(out, "{}", header.join("\t"))?;
             }
             ExportFormat::Json => out.write_all(b"[")?,
@@ -111,11 +111,11 @@ impl<W: Write> RowWriter<W> {
         let values = self.columns.iter().zip(row);
         match self.format {
             ExportFormat::Csv => {
-                let fields: Vec<_> = values.map(|(_, v)| csv_field(v.as_deref())).collect();
+                let fields: Vec<_> = values.map(|((_, kind), v)| csv_field(*kind, v.as_deref())).collect();
                 write!(self.out, "{}\r\n", fields.join(","))?;
             }
             ExportFormat::Tsv => {
-                let fields: Vec<_> = values.map(|(_, v)| tsv_field(v.as_deref())).collect();
+                let fields: Vec<_> = values.map(|((_, kind), v)| tsv_field(*kind, v.as_deref())).collect();
                 writeln!(self.out, "{}", fields.join("\t"))?;
             }
             ExportFormat::Json => {
@@ -183,21 +183,35 @@ pub(crate) fn remove_on_error<T>(path: &Path, result: Result<T>) -> Result<T> {
 }
 
 /// RFC 4180. NULL is an empty field; an empty string is `""`, so the two stay apart.
-fn csv_field(value: Option<&str>) -> String {
+fn csv_field(kind: Kind, value: Option<&str>) -> String {
     match value {
         None => String::new(),
         Some("") => "\"\"".into(),
-        Some(v) if v.contains([',', '"', '\n', '\r']) => format!("\"{}\"", v.replace('"', "\"\"")),
-        Some(v) => v.to_owned(),
+        Some(v) => {
+            let v = spreadsheet_safe(kind, v);
+            if v.contains([',', '"', '\n', '\r']) { format!("\"{}\"", v.replace('"', "\"\"")) } else { v }
+        }
     }
 }
 
 /// Quoted only when it holds a tab, quote or line break, as spreadsheets expect.
-fn tsv_field(value: Option<&str>) -> String {
+fn tsv_field(kind: Kind, value: Option<&str>) -> String {
     match value {
         None => String::new(),
-        Some(v) if v.contains(['\t', '"', '\n', '\r']) => format!("\"{}\"", v.replace('"', "\"\"")),
-        Some(v) => v.to_owned(),
+        Some(v) => {
+            let v = spreadsheet_safe(kind, v);
+            if v.contains(['\t', '"', '\n', '\r']) { format!("\"{}\"", v.replace('"', "\"\"")) } else { v }
+        }
+    }
+}
+
+/// Excel and similar programs interpret these prefixes as formulas even in a
+/// quoted CSV field. Prefix text with an apostrophe; keep typed numbers intact.
+fn spreadsheet_safe(kind: Kind, value: &str) -> String {
+    if kind == Kind::Text && value.starts_with(['=', '+', '-', '@', '\t', '\r']) {
+        format!("'{value}")
+    } else {
+        value.to_owned()
     }
 }
 

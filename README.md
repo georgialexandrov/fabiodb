@@ -104,8 +104,8 @@ claude mcp add fabio -- "$PWD/target/release/fabiodb-mcp"
 
 Then tick **Agents can query** on the connections you want to share. The agent
 can list tables, describe them, sample rows, run queries, explain them (with
-Fabio's findings), read Insights, find databases in a project folder, and add a
-connection you gave it. The connection is tested before it's saved.
+Fabio's findings), and read Insights. Connections can only be created and
+opened to agents in the desktop app.
 
 What the agent **can't** do:
 
@@ -114,14 +114,14 @@ What the agent **can't** do:
   `EXPLAIN`) are accepted. SQLite connections open read-only with `query_only`
   on and `ATTACH` refused.
 - **Run long or fetch everything.** 10 seconds per statement, 500 rows.
-- **See connections you didn't open to it.** The allowlist is read on every call.
-- **Act unseen.** Every agent statement, and every connection it adds, is
-  written to the audit log and shown in Fabio's Agent panel.
+- **See connections you didn't open to it.** The allowlist is read on every call,
+  and MCP cannot create connections or scan the filesystem for databases.
+- **Act unseen.** Every agent statement is written to the audit log and shown
+  in Fabio's Agent panel.
 
-A read-only transaction is not a full sandbox. Some functions with side
-effects, such as `pg_terminate_backend`, are stopped only by the role's
-privileges. For a database that matters, give the agent's connection a role
-without superuser.
+A read-only transaction is not a full sandbox, so Postgres agent access refuses
+superusers and roles with server-wide, server-file, or server-program privileges.
+Use a dedicated login with only the schemas and tables the agent should read.
 
 ## Keys
 

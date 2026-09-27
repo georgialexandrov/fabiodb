@@ -4,7 +4,8 @@
 use fabiodb_core::{Db, PgTarget, Target};
 
 pub fn postgres_target() -> Target {
-    let url = std::env::var("FABIO_TEST_PG_URL").unwrap_or_else(|_| "postgres://fabio@localhost:54329/chinook".into());
+    let url = std::env::var("FABIO_TEST_PG_URL")
+        .unwrap_or_else(|_| "postgres://fabio@localhost:54329/chinook?sslmode=disable".into());
     Target::Postgres(PgTarget::from_url(&url).unwrap())
 }
 

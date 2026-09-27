@@ -10,7 +10,8 @@ jobs:
   check:
     runs-on: ubuntu-latest
     env:
-      FABIO_TEST_PG_URL: postgres://fabio@localhost:54329/chinook
+      FABIO_TEST_PG_URL: postgres://fabio@localhost:54329/chinook?sslmode=disable
+      FABIO_TEST_AGENT_PG_URL: postgres://fabio_agent@localhost:54329/chinook?sslmode=disable
       PGHOST: localhost
       PGPORT: "54329"
       PGUSER: fabio

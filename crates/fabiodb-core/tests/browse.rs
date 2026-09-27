@@ -30,11 +30,11 @@ fn parses_a_postgres_url_into_fields() {
 }
 
 #[test]
-fn url_defaults_match_libpq() {
+fn url_defaults_verify_the_server() {
     let t = PgTarget::from_url("postgres://me@localhost/app").unwrap();
 
     assert_eq!(t.port, 5432);
-    assert_eq!(t.ssl, SslMode::Prefer);
+    assert_eq!(t.ssl, SslMode::VerifyFull);
     assert_eq!(t.password, None);
 }
 

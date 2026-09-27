@@ -31,8 +31,8 @@ impl Server {
         let _ = std::fs::remove_dir_all(&dir);
         let store = Store::new(dir.join("connections.json"));
         let sqlite: PathBuf = concat!(env!("CARGO_MANIFEST_DIR"), "/../../dev/data/Chinook_Sqlite.sqlite").into();
-        let url =
-            std::env::var("FABIO_TEST_PG_URL").unwrap_or_else(|_| "postgres://fabio@localhost:54329/chinook".into());
+        let url = std::env::var("FABIO_TEST_AGENT_PG_URL")
+            .unwrap_or_else(|_| "postgres://fabio_agent@localhost:54329/chinook?sslmode=disable".into());
         for (id, agent, target) in [
             ("pg", true, Target::Postgres(PgTarget::from_url(&url).unwrap())),
             ("lite", true, Target::Sqlite { path: sqlite.clone() }),
@@ -104,17 +104,7 @@ fn lists_its_tools() {
         tools["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
     assert_eq!(
         names,
-        [
-            "list_connections",
-            "list_tables",
-            "describe_table",
-            "sample_rows",
-            "query",
-            "explain",
-            "insights",
-            "find_databases",
-            "create_connection"
-        ]
+        ["list_connections", "list_tables", "describe_table", "sample_rows", "query", "explain", "insights"]
     );
 }
 
@@ -186,24 +176,4 @@ fn insights_on_postgres() {
     let (text, error) = Server::start().call("insights", json!({"connection": "pg"}));
     assert!(!error, "{text}");
     assert!(text.contains("top_statements"), "{text}");
-}
-
-#[test]
-fn creates_a_connection_and_finds_databases_in_a_folder() {
-    let mut server = Server::start();
-    let (text, error) =
-        server.call("create_connection", json!({"name": "again", "url": "postgres://fabio@localhost:54329/chinook"}));
-    assert!(!error, "{text}");
-    let (text, _) = server.call("list_connections", json!({}));
-    assert!(text.contains("again"), "{text}");
-    let (text, error) = server.call("query", json!({"connection": "again", "sql": "select 1"}));
-    assert!(!error, "{text}");
-
-    let folder = server.dir.join("project");
-    std::fs::create_dir_all(&folder).unwrap();
-    std::fs::write(folder.join("compose.yaml"), "services:\n  db:\n    image: postgres:17\n    ports: ['5999:5432']\n")
-        .unwrap();
-    let (text, error) = server.call("find_databases", json!({"folder": folder}));
-    assert!(!error, "{text}");
-    assert!(text.contains("postgres://postgres@localhost:5999/postgres"), "{text}");
 }

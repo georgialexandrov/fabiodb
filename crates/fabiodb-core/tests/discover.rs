@@ -132,3 +132,26 @@ fn a_broken_compose_file_is_reported_not_fatal() {
     assert_eq!(discovery.problems.len(), 1);
     assert!(discovery.problems[0].contains("compose.yaml"), "{:?}", discovery.problems);
 }
+
+#[test]
+fn compose_cannot_interpolate_fabios_process_environment() {
+    let dir = folder(&[(
+        "compose.yaml",
+        "services:\n  db:\n    image: postgres\n    environment:\n      POSTGRES_PASSWORD: ${HOME}\n",
+    )]);
+
+    let found = discover(&dir).unwrap().found;
+    assert_eq!(pg(&found[0].target).password.as_deref(), Some(""));
+}
+
+#[test]
+fn compose_env_file_cannot_escape_the_project() {
+    let outside = std::env::temp_dir().join(format!("fabio-discover-secret-{}.env", std::process::id()));
+    std::fs::write(&outside, "POSTGRES_PASSWORD=stolen\n").unwrap();
+    let compose = format!("services:\n  db:\n    image: postgres\n    env_file: {}\n", outside.display());
+    let dir = folder(&[("compose.yaml", &compose)]);
+
+    let found = discover(&dir).unwrap().found;
+    assert_eq!(pg(&found[0].target).password, None);
+    std::fs::remove_file(outside).unwrap();
+}

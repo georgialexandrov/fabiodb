@@ -59,27 +59,6 @@ pub fn list() -> Value {
             "description": "Postgres only. Running sessions and who blocks whom, the statements with the most total time (pg_stat_statements, if installed), tables read by full scans, and unused indexes.",
             "inputSchema": {"type": "object", "properties": {"connection": connection}, "required": ["connection"]},
         },
-        {
-            "name": "find_databases",
-            "description": "Postgres services in a folder's Docker Compose file (with .env) and SQLite files in it, each with a URL or path create_connection takes. Nothing is saved.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {"folder": {"type": "string", "description": "Absolute path of a project folder."}},
-                "required": ["folder"],
-            },
-        },
-        {
-            "name": "create_connection",
-            "description": "Saves a connection in Fabio after checking it connects, so you (and the user) can use it. It's read-only for you like every connection, grouped under \"Added by agents\", and the user sees it was added. The password goes to the OS keychain.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string", "description": "What the user will see, e.g. \"shop (docker)\"."},
-                    "url": {"type": "string", "description": "postgres://user:password@host:port/database, or the path of a SQLite file."},
-                },
-                "required": ["name", "url"],
-            },
-        },
     ])
 }
 
@@ -120,42 +99,7 @@ pub async fn call(agent: &Agent, tool: &str, args: &Value) -> Result<String, Str
             Ok(plan_text(&agent.explain(text("connection")?, text("sql")?, analyze).await.map_err(fail)?))
         }
         "insights" => to_json(&agent.insights(text("connection")?).await.map_err(fail)?),
-        "find_databases" => {
-            let discovery = fabiodb_core::discover(std::path::Path::new(text("folder")?)).map_err(fail)?;
-            let found: Vec<_> = discovery
-                .found
-                .iter()
-                .map(|d| json!({"name": d.name, "url": url_of(&d.target), "source": d.source, "note": d.note}))
-                .collect();
-            to_json(&json!({"found": found, "problems": discovery.problems}))
-        }
-        "create_connection" => {
-            let created = agent.create_connection(text("name")?, text("url")?).await.map_err(fail)?;
-            Ok(format!(
-                "Saved “{}” ({}). Its id is {}; query it by name or id.",
-                created.name, created.engine, created.id
-            ))
-        }
         other => Err(format!("unknown tool: {other}")),
-    }
-}
-
-/// A postgres:// URL (password included, as the Compose file has it) or a file path.
-fn url_of(target: &fabiodb_core::Target) -> String {
-    match target {
-        fabiodb_core::Target::Postgres(pg) => {
-            let enc = |s: &str| {
-                s.bytes()
-                    .map(|b| match b {
-                        b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => (b as char).to_string(),
-                        _ => format!("%{b:02X}"),
-                    })
-                    .collect::<String>()
-            };
-            let password = pg.password.as_deref().map(|p| format!(":{}", enc(p))).unwrap_or_default();
-            format!("postgres://{}{password}@{}:{}/{}", enc(&pg.user), pg.host, pg.port, enc(&pg.database))
-        }
-        fabiodb_core::Target::Sqlite { path } => path.display().to_string(),
     }
 }
 

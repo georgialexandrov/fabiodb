@@ -19,7 +19,6 @@ use crate::{
 pub enum SslMode {
     Disable,
     /// Use TLS if the server offers it. Like libpq, the certificate is not verified.
-    #[default]
     Prefer,
     /// Require TLS. Like libpq, the certificate is not verified.
     Require,
@@ -28,6 +27,7 @@ pub enum SslMode {
     VerifyCa,
     /// As `VerifyCa`, and the certificate must name the host connected to.
     #[serde(rename = "verify-full")]
+    #[default]
     VerifyFull,
 }
 
@@ -52,7 +52,7 @@ pub struct PgTarget {
 impl PgTarget {
     pub fn from_url(url: &str) -> Result<PgTarget> {
         // tokio-postgres knows neither verify mode nor sslrootcert; take them out first.
-        let (url, verify, ca_cert) = split_tls_params(url);
+        let (url, ssl, ca_cert) = split_tls_params(url);
         let config = tokio_postgres::Config::from_str(&url)?;
         let host = match config.get_hosts().first() {
             Some(tokio_postgres::config::Host::Tcp(h)) => h.clone(),
@@ -67,31 +67,31 @@ impl PgTarget {
             database: config.get_dbname().map_or_else(|| user.clone(), str::to_owned),
             user,
             password: config.get_password().map(|p| String::from_utf8_lossy(p).into_owned()),
-            ssl: verify.unwrap_or(match config.get_ssl_mode() {
-                tokio_postgres::config::SslMode::Disable => SslMode::Disable,
-                tokio_postgres::config::SslMode::Require => SslMode::Require,
-                _ => SslMode::Prefer,
-            }),
+            ssl: ssl.unwrap_or_default(),
             ca_cert,
             ssh: None,
         })
     }
 }
 
-/// The URL without `sslmode=verify-*` and `sslrootcert=…`, and what they said.
+/// The URL without Fabio's TLS parameters, and what they said. With no
+/// `sslmode`, Fabio verifies the server name and certificate by default.
 fn split_tls_params(url: &str) -> (String, Option<SslMode>, Option<PathBuf>) {
     let Some((base, query)) = url.split_once('?') else { return (url.to_owned(), None, None) };
-    let (mut verify, mut ca_cert, mut kept) = (None, None, Vec::new());
+    let (mut ssl, mut ca_cert, mut kept) = (None, None, Vec::new());
     for pair in query.split('&') {
         match pair.split_once('=') {
-            Some(("sslmode", "verify-ca")) => verify = Some(SslMode::VerifyCa),
-            Some(("sslmode", "verify-full")) => verify = Some(SslMode::VerifyFull),
+            Some(("sslmode", "disable")) => ssl = Some(SslMode::Disable),
+            Some(("sslmode", "prefer")) => ssl = Some(SslMode::Prefer),
+            Some(("sslmode", "require")) => ssl = Some(SslMode::Require),
+            Some(("sslmode", "verify-ca")) => ssl = Some(SslMode::VerifyCa),
+            Some(("sslmode", "verify-full")) => ssl = Some(SslMode::VerifyFull),
             Some(("sslrootcert", path)) => ca_cert = Some(PathBuf::from(percent_decode(path))),
             _ => kept.push(pair),
         }
     }
     let url = if kept.is_empty() { base.to_owned() } else { format!("{base}?{}", kept.join("&")) };
-    (url, verify, ca_cert)
+    (url, ssl, ca_cert)
 }
 
 fn percent_decode(s: &str) -> String {
@@ -223,6 +223,32 @@ impl Pg {
 
     pub(crate) fn client(&self) -> &Client {
         &self.client
+    }
+
+    /// A read-only transaction cannot sandbox superusers or roles that can
+    /// touch server files/programs. Agent access is refused for such accounts;
+    /// it must use a deliberately least-privilege login.
+    pub(crate) async fn ensure_safe_agent_role(&self) -> Result<()> {
+        let row = self
+            .client
+            .query_one(
+                "SELECT /* fabio */ r.rolsuper, r.rolcreaterole, r.rolcreatedb,
+                        r.rolreplication, r.rolbypassrls,
+                        pg_has_role(current_user, 'pg_read_server_files', 'MEMBER'),
+                        pg_has_role(current_user, 'pg_write_server_files', 'MEMBER'),
+                        pg_has_role(current_user, 'pg_execute_server_program', 'MEMBER')
+                   FROM pg_roles r WHERE r.rolname = current_user",
+                &[],
+            )
+            .await?;
+        let privileged = (0..8).any(|i| row.get::<_, bool>(i));
+        if privileged {
+            return Err(Error::Invalid(
+                "Agent access needs a least-privilege Postgres login. Superusers and roles with server-wide or server-file privileges are refused."
+                    .into(),
+            ));
+        }
+        Ok(())
     }
 
     /// Runs one statement inside a read-only transaction that is always rolled

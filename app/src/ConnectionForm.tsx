@@ -5,7 +5,7 @@ import { api, type SavedConnection, type SslMode, type Target } from "./api";
 const NEW_POSTGRES: SavedConnection = {
   id: "",
   name: "",
-  target: { engine: "postgres", host: "localhost", port: 5432, user: "postgres", password: null, database: "postgres", ssl: "prefer", ca_cert: null },
+  target: { engine: "postgres", host: "localhost", port: 5432, user: "postgres", password: null, database: "postgres", ssl: "verify-full", ca_cert: null },
   agent: false,
 };
 
@@ -161,10 +161,10 @@ export function ConnectionForm({ initial, groups, onSaved, onDeleted, onClose }:
                 SSL
                 <select value={t.ssl} onChange={(e) => setTarget({ ssl: e.target.value as SslMode })}>
                   <option value="disable">disable</option>
-                  <option value="prefer">prefer</option>
-                  <option value="require">require</option>
+                  <option value="prefer">prefer (allows plaintext)</option>
+                  <option value="require">require (certificate not verified)</option>
                   <option value="verify-ca">verify-ca</option>
-                  <option value="verify-full">verify-full</option>
+                  <option value="verify-full">verify-full (recommended)</option>
                 </select>
               </label>
             </div>
@@ -288,7 +288,7 @@ export function ConnectionForm({ initial, groups, onSaved, onDeleted, onClose }:
             Agents can query
             <span className="hint-inline">
               {" "}
-              — read-only, through Fabio’s MCP server. Every statement shows up under Agent.
+              — requires a least-privilege database login. Every statement shows up under Agent.
             </span>
           </span>
         </label>

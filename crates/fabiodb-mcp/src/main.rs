@@ -27,8 +27,6 @@ const INSTRUCTIONS: &str = "Fabio gives read-only access to the databases its us
 (Postgres and SQLite). Start with list_connections, then list_tables and describe_table. \
 Each call runs one statement; results are capped at 500 rows and statements stop after 10 s. \
 To find out why a query is slow, use explain: it returns Fabio's findings and the plan. \
-To add a database the user points you to, use find_databases on their project folder \
-or create_connection with a URL; both show up in Fabio. \
 The user sees every statement you run in Fabio's agent panel.";
 
 #[tokio::main]
@@ -129,12 +127,6 @@ impl Keychain for OsKeychain {
                 Ok(None)
             }
         }
-    }
-
-    fn set(&self, id: &str, password: &str) -> fabiodb_core::Result<()> {
-        keyring::Entry::new(KEYCHAIN_SERVICE, id)
-            .and_then(|entry| entry.set_password(password))
-            .map_err(|e| fabiodb_core::Error::Invalid(format!("keychain: {e}")))
     }
 }
 

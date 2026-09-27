@@ -6,7 +6,8 @@ use fabiodb_core::{Db, PgTarget, Target};
 #[tokio::main]
 async fn main() {
     let sql = std::env::args().nth(1).expect("a statement");
-    let target = Target::Postgres(PgTarget::from_url("postgres://fabio@localhost:54329/chinook").unwrap());
+    let target =
+        Target::Postgres(PgTarget::from_url("postgres://fabio@localhost:54329/chinook?sslmode=disable").unwrap());
     let plan = Db::open(&target).await.unwrap().explain(&sql, true).await.unwrap();
     println!("execution {:?} ms", plan.execution_ms);
     for f in plan.findings {

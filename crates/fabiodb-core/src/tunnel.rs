@@ -43,6 +43,7 @@ const READY_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// A local port forwarded to `host:port` on the far side of `ssh`.
 pub(crate) async fn open(ssh: &SshTunnel, host: &str, port: u16) -> Result<Arc<Tunnel>> {
+    validate_destination(ssh)?;
     let key = format!("{ssh:?} → {host}:{port}");
     if let Some(tunnel) = TUNNELS.lock().expect("tunnels poisoned").get(&key).and_then(Weak::upgrade) {
         return Ok(tunnel);
@@ -61,10 +62,12 @@ pub(crate) async fn open(ssh: &SshTunnel, host: &str, port: u16) -> Result<Arc<T
     if let Some(key_file) = &ssh.identity_file {
         command.arg("-i").arg(key_file);
     }
-    command.arg(match &ssh.user {
+    let destination = match &ssh.user {
         Some(user) => format!("{user}@{}", ssh.host),
         None => ssh.host.clone(),
-    });
+    };
+    // Stop a host such as `-oProxyCommand=...` from becoming an ssh option.
+    command.arg("--").arg(destination);
     command.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()).kill_on_drop(true);
     let mut child = command.spawn().map_err(|e| Error::Invalid(format!("Couldn't start ssh: {e}")))?;
 
@@ -94,4 +97,12 @@ pub(crate) async fn open(ssh: &SshTunnel, host: &str, port: u16) -> Result<Arc<T
     let tunnel = Arc::new(Tunnel { _ssh: child, local_port });
     TUNNELS.lock().expect("tunnels poisoned").insert(key, Arc::downgrade(&tunnel));
     Ok(tunnel)
+}
+
+fn validate_destination(ssh: &SshTunnel) -> Result<()> {
+    let safe = |value: &str| !value.is_empty() && !value.starts_with('-') && !value.chars().any(char::is_whitespace);
+    if !safe(&ssh.host) || ssh.user.as_deref().is_some_and(|u| !safe(u) || u.contains('@')) {
+        return Err(Error::Invalid("SSH host or user contains characters that are not valid in a destination.".into()));
+    }
+    Ok(())
 }

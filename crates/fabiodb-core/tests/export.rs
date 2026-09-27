@@ -175,3 +175,11 @@ fn tsv_is_for_pasting_into_spreadsheets() {
             .unwrap();
     assert_eq!(tsv, "id\tname\n1\tplain\n2\t\"comma, \"\"quote\"\"\nnewline | pipe\"\n3\t\n");
 }
+
+#[test]
+fn spreadsheet_exports_neutralize_formulas_but_keep_numbers() {
+    let columns = vec![col("=header", "text"), col("amount", "numeric")];
+    let rows = vec![vec![v("=HYPERLINK(\"https://evil.invalid\")"), v("-12.5")]];
+    let csv = format_rows(ExportFormat::Csv, &columns, &rows, None).unwrap();
+    assert_eq!(csv, "'=header,amount\r\n\"'=HYPERLINK(\"\"https://evil.invalid\"\")\",-12.5\r\n");
+}

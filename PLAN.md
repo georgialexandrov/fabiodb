@@ -154,6 +154,9 @@ current one's exit criteria hold.
     `SET`s outlives it
   - only reading statements (SELECT, WITH, VALUES, TABLE, SHOW, EXPLAIN): a
     read-only transaction still lets a superuser `COPY … TO PROGRAM` or run `DO`
+  - Postgres superusers and roles with server-wide, server-file, or
+    server-program privileges are refused; agent access needs a dedicated
+    least-privilege login
   - `statement_timeout` (default 10 s), hard row cap (default 500)
   - SQLite: opened read-only + `PRAGMA query_only = ON` (set again before each
     statement), ATTACH disabled; a timer interrupt replaces `statement_timeout`
@@ -161,10 +164,9 @@ current one's exit criteria hold.
 - Agent panel in the UI: live feed of agent statements from the audit log,
   click one to open its result and plan in a tab. The log keeps no results,
   so opening one runs it again in a read-only query tab (or explains it again).
-- **Known limit:** functions with side effects that a read-only transaction
-  allows (`pg_terminate_backend`, `pg_reload_conf`, `dblink`) are stopped
-  only by the role's privileges. For anything that matters, give the agent
-  connection a role without superuser.
+- **Role boundary:** functions can have effects outside a transaction, so agent
+  access requires a dedicated least-privilege login and refuses privileged
+  Postgres roles.
 - **Exit:** Claude Code debugs a slow query on the dev DB and you watch every step.
 
 ### Phase 5 — Polish & open source (ongoing)

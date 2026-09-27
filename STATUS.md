@@ -83,10 +83,10 @@ rolled back) with findings and plan tree, SQLite query plan, Insights.
   SQLite: read-only, `query_only`, no ATTACH, 10 s interrupt, 500 rows.
 - **Allowlist** (`agent` flag, "Agents can query"), read fresh on every call.
 - **`fabiodb-mcp` tools:** list_connections, list_tables, describe_table,
-  sample_rows, query, explain (findings + plan text), insights,
-  **find_databases** (folder scan) and **create_connection** (tested before it's
-  saved, open to agents, group "Added by agents", password to the keychain).
-- **Agent panel** + sidebar line; every agent statement and added connection is audited.
+  sample_rows, query, explain (findings + plan text), insights. Connections are
+  created and explicitly opened to agents in the desktop app; MCP cannot grant
+  itself new filesystem or network access.
+- **Agent panel** + sidebar line; every agent statement is audited.
 
 ### Phase 5 / v0.1 (see PLAN.md "v0.1")
 - **CI:** `dev/check.sh`; workflow written; budgets fail the check.
@@ -147,8 +147,9 @@ automation stopped; these want a manual pass.
 - Browse calls aren't audited; typed statements, saves and agent actions are.
 
 ## Gotchas learned the hard way
-- **A read-only transaction is not a sandbox.** As superuser, `COPY … TO
-  PROGRAM` runs a shell inside `BEGIN READ ONLY`. Hence the statement-kind check.
+- **A read-only transaction is not a sandbox.** Agent connections reject
+  superusers and server-file/program roles, in addition to the statement-kind
+  check and `BEGIN READ ONLY` guard.
 - **A hidden window gets no animation frames.** Showing it "after first paint"
   waited for a 1.5 s fallback (1717 ms start). Show after render, then measure paint.
 - tokio-postgres `Config::port()` appends; set it once. Its non-server errors
