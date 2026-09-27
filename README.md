@@ -23,9 +23,10 @@ priorities first:
 
 Postgres and SQLite only. No accounts, no cloud, no telemetry.
 
-> **Status: v0.1, macOS first, unsigned.** Fabio isn't packaged yet: you build
-> it from source (below). The core and tests also run on Linux in CI; the app
-> on Linux and Windows is untested.
+> **Status: v0.1, macOS, not notarized yet.** Download the DMG from
+> [Releases](https://github.com/georgialexandrov/fabiodb/releases/latest)
+> (Apple Silicon and Intel), or build from source (below). The core and tests
+> also run on Linux in CI; the app on Linux and Windows is untested.
 
 ## What it does
 
@@ -135,6 +136,20 @@ without superuser.
 | ⌘I | Row details |
 | ⌘F | Filter the selected column |
 | ⇧⌘L | Theme: system, light, dark |
+
+## Install
+
+Download `Fabio_<version>_universal.dmg` from the
+[latest release](https://github.com/georgialexandrov/fabiodb/releases/latest),
+open it and drag Fabio to Applications.
+
+Fabio isn't notarized by Apple yet, so macOS blocks the first launch. Go to
+System Settings → Privacy & Security and choose Open Anyway. If macOS says the
+app is damaged, run `xattr -dr com.apple.quarantine /Applications/Fabio.app`
+once.
+
+To publish a new release, push a tag: `git tag v0.1.1 && git push origin v0.1.1`.
+The Release workflow builds the DMG and attaches it.
 
 ## Build from source
 

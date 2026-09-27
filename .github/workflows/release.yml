@@ -1,0 +1,69 @@
+# Push a tag like v0.1.0 to build a universal (Apple Silicon + Intel) DMG and
+# publish it as a GitHub release. The app is ad-hoc signed, not notarized.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (must exist), e.g. v0.1.0"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  dmg:
+    runs-on: macos-latest
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+        working-directory: app
+
+      - name: Build the DMG
+        run: pnpm tauri build --target universal-apple-darwin --bundles dmg
+        working-directory: app
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          dmg=$(ls target/universal-apple-darwin/release/bundle/dmg/*.dmg)
+          cat > notes.md <<'EOF'
+          ## Install
+
+          1. Download the `.dmg` below, open it and drag **Fabio** to Applications.
+          2. Open Fabio. macOS blocks it the first time, because the app isn't
+             notarized by Apple yet.
+          3. Go to **System Settings → Privacy & Security**, scroll down and choose
+             **Open Anyway**, then confirm.
+
+          If macOS says the app is damaged, run this once in Terminal:
+
+          ```sh
+          xattr -dr com.apple.quarantine /Applications/Fabio.app
+          ```
+
+          Works on Apple Silicon and Intel Macs.
+          EOF
+          gh release create "$TAG" "$dmg" --title "Fabio ${TAG#v}" --notes-file notes.md --generate-notes
