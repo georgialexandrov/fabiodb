@@ -422,7 +422,13 @@ export default function App() {
           {connections.length === 0 ? (
             <p className="hint">Add a Postgres connection, or drop a SQLite file anywhere.</p>
           ) : (
-            <button className="current-connection" onClick={() => setSwitcher((v) => !v)} title="Switch connection (⇧⌘K)">
+            <button
+              className="current-connection"
+              // The switcher closes on any mousedown outside it; this button toggles it instead.
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={() => setSwitcher((v) => !v)}
+              title="Switch connection (⇧⌘K)"
+            >
               {active ? (
                 <>
                   <span className={`engine ${active.target.engine}`}>{active.target.engine === "postgres" ? "PG" : "SQ"}</span>
