@@ -90,6 +90,7 @@ select:focus, input:focus, textarea:focus { border-color: var(--accent); }
   display: flex;
   flex-direction: column;
   min-height: 0;
+  -webkit-user-select: none;
   user-select: none;
 }
 /* Title bar is hidden; leave room for the traffic lights above the brand. */
@@ -217,7 +218,7 @@ select:focus, input:focus, textarea:focus { border-color: var(--accent); }
 
 /* --- tabs ---------------------------------------------------------------- */
 
-.tabs { display: flex; align-items: flex-end; gap: 2px; padding: 8px 10px 0; border-bottom: 1px solid var(--line); min-height: 38px; overflow-x: auto; }
+.tabs { -webkit-user-select: none; user-select: none; display: flex; align-items: flex-end; gap: 2px; padding: 8px 10px 0; border-bottom: 1px solid var(--line); min-height: 38px; overflow-x: auto; }
 .tab { display: flex; align-items: center; gap: 6px; max-width: 200px; padding: 5px 6px 5px 12px; border-radius: 7px 7px 0 0; color: var(--muted); border: 1px solid transparent; border-bottom: 0; margin-bottom: -1px; }
 .tab:hover { color: var(--text); }
 .tab.active { color: var(--text); background: var(--bg); border-color: var(--line); }
@@ -318,8 +319,13 @@ button:disabled { opacity: 0.4; }
 /* Cell editing */
 .grid-cell.edited { background: var(--accent-soft); font-weight: 550; }
 .grid-cell.editing { padding: 0; display: flex; align-items: stretch; overflow: visible; z-index: 2; }
-.grid-cell.editing textarea { flex: 1; min-width: 0; resize: none; border: 1px solid var(--accent); border-radius: 0; margin: 0; padding: 3px 8px; font: inherit; font-family: var(--mono); background: var(--surface); color: var(--text); outline: none; white-space: pre; overflow: hidden; }
+.grid-cell.editing { position: relative; }
+.grid-cell.editing .cell-float { position: absolute; top: 0; left: 0; z-index: 3; display: flex; align-items: stretch; box-shadow: 0 6px 18px #0002; }
+.grid-cell.editing textarea { resize: none; border: 1px solid var(--accent); border-radius: 0; margin: 0; padding: 3px 8px; font: inherit; font-family: var(--mono); line-height: 18px; background: var(--surface); color: var(--text); outline: none; white-space: pre-wrap; word-break: break-word; overflow: auto; }
 .grid-cell.editing .set-null { border: 1px solid var(--accent); border-left: 0; border-radius: 0; padding: 0 6px; font-size: 10px; color: var(--muted); background: var(--surface); }
+.change-preview { max-height: 30vh; overflow: auto; border-top: 1px solid var(--line); background: var(--surface); }
+.change-preview .sql-preview { margin: 0; border: 0; border-radius: 0; }
+.status .segmented button { padding: 1px 10px; font-size: 12px; }
 .edit-bar { display: flex; align-items: center; gap: 10px; padding: 6px 16px; border-top: 1px solid var(--line); background: var(--accent-soft); font-size: 12px; }
 .sql-preview { max-height: 320px; overflow: auto; margin: 0; padding: 10px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; font-family: var(--mono); font-size: 12px; white-space: pre-wrap; }
 .modal.wide { width: 640px; }
@@ -341,8 +347,8 @@ button:disabled { opacity: 0.4; }
 .snippet-name { font-weight: 600; flex: 1; }
 
 /* Row details (⌘I) */
-.row-pane-toggle { border: 0; background: none; padding: 0; color: var(--muted); opacity: 0.6; line-height: 1; }
-.row-pane-toggle.on { color: var(--accent); opacity: 1; }
+button.icon { display: inline-flex; align-items: center; padding: 3px 5px; }
+button.icon.on { color: var(--accent); }
 .row-pane { width: 340px; border-left: 1px solid var(--line); display: flex; flex-direction: column; background: var(--surface); min-height: 0; }
 .row-pane header { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--muted); }
 .row-pane-fields { overflow: auto; padding: 4px 0; }
@@ -421,3 +427,6 @@ button:disabled { opacity: 0.4; }
 .link-peek dt { flex: 0 0 38%; color: var(--muted); }
 .link-peek dd { flex: 1; margin: 0; font-family: var(--mono); font-size: 11px; }
 .link-peek dd.null { color: var(--muted); font-style: italic; }
+
+/* A preview tab: replaced by the next table you click, until you keep it. */
+.tab.preview .ellipsis { font-style: italic; }

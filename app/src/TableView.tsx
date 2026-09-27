@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ColumnFilter, filterText } from "./ColumnFilter";
 import { chooseFile, ExportMenu } from "./ExportMenu";
 import { Grid, type GridEdit, type GridLink, type LinkedRow } from "./Grid";
-import { NewRow } from "./NewRow";
+import { RowPaneButton } from "./rowPane";
 import { Structure } from "./Structure";
 import {
   api,
@@ -34,12 +34,14 @@ type Props = {
   relation: Relation;
   follow?: Follow;
   onOpen: (r: RelationRef, filters?: Filter[]) => void;
+  /** Keeps a preview tab open: called once there are unsaved changes. */
+  onPin?: () => void;
 };
 
 /** Unsaved edits of one row, keyed by column name. */
 type PendingRow = { key: ColumnValue[]; changes: Record<string, { old: string | null; new: string | null }> };
 
-export function TableView({ connectionId, relation, follow, onOpen }: Props) {
+export function TableView({ connectionId, relation, follow, onOpen, onPin }: Props) {
   const [tab, setTab] = useState<"data" | "structure">("data");
   const [info, setInfo] = useState<TableInfo | null>(null);
   const [sort, setSort] = useState<Sort | null>(null);
@@ -59,10 +61,13 @@ export function TableView({ connectionId, relation, follow, onOpen }: Props) {
   const [notice, setNotice] = useState<string | null>(null);
   // Keyed by the row's primary-key values, so edits survive sorting and paging.
   const [edits, setEdits] = useState<Record<string, PendingRow>>({});
-  const [inserts, setInserts] = useState<ColumnValue[][]>([]);
+  // New rows, shown first in the grid; a column left out takes its default.
+  const [drafts, setDrafts] = useState<Record<string, string | null>[]>([]);
+  const [editAt, setEditAt] = useState<{ row: number; col: number; nonce: number } | null>(null);
+  // The statements a save would run, shown under the edit bar while open.
+  const [preview, setPreview] = useState<{ sql: string[] | null; error: string | null } | null>(null);
   // Rows marked for deletion, by the same key as edits.
   const [deletes, setDeletes] = useState<Record<string, ColumnValue[]>>({});
-  const [adding, setAdding] = useState(false);
   const [review, setReview] = useState<{ sql: string[]; error: string | null; saving: boolean } | null>(null);
   const [reloads, setReloads] = useState(0);
   const root = useRef<HTMLDivElement>(null);
@@ -78,7 +83,7 @@ export function TableView({ connectionId, relation, follow, onOpen }: Props) {
     peeks.current.clear();
     setInfo(null);
     setEdits({});
-    setInserts([]);
+    setDrafts([]);
     setDeletes({});
     api.describe(connectionId, relation).then(setInfo, (e) => setError(String(e)));
   }, [connectionId, relation.schema, relation.name]);
@@ -144,7 +149,7 @@ export function TableView({ connectionId, relation, follow, onOpen }: Props) {
   const currentPage = Math.min(pageCount, Math.floor(firstVisible / PAGE_SIZE) + 1);
 
   function onRange(windowFirst: number, windowLast: number) {
-    const [first, last] = [base + windowFirst, base + windowLast];
+    const [first, last] = [base + Math.max(0, windowFirst - newRows), base + Math.max(0, windowLast - newRows)];
     setFirstVisible(first);
     const gen = generation.current;
     for (let n = Math.floor(first / PAGE_SIZE); n <= Math.floor(last / PAGE_SIZE); n++) {
@@ -163,25 +168,37 @@ export function TableView({ connectionId, relation, follow, onOpen }: Props) {
       nextBase = Math.floor(centred / PAGE_SIZE) * PAGE_SIZE;
       setBase(nextBase);
     }
-    setJump({ row: target - nextBase, nonce: Date.now() });
+    setJump({ row: target - nextBase + newRows, nonce: Date.now() });
   }
 
   const columns = info?.columns ?? [];
+  const gridColumns = meta?.columns ?? [];
   const pkIndexes = columns.flatMap((c, i) => (c.primary_key ? [i] : []));
-  const rowAt = (i: number) => pages[Math.floor((base + i) / PAGE_SIZE)]?.[(base + i) % PAGE_SIZE];
+  const newRows = drafts.length;
+  // Grid rows: the new ones first, then the table's.
+  const loadedAt = (i: number) => pages[Math.floor((base + i) / PAGE_SIZE)]?.[(base + i) % PAGE_SIZE];
+  const rowAt = (i: number) =>
+    i < newRows ? gridColumns.map((col) => drafts[i][col.name] ?? null) : loadedAt(i - newRows);
   const keyOf = (r: (string | null)[]) => JSON.stringify(pkIndexes.map((i) => r[i]));
   const editCount = Object.values(edits).reduce((n, e) => n + Object.keys(e.changes).length, 0);
   const deleteCount = Object.keys(deletes).length;
-  const changeCount = editCount + inserts.length + deleteCount;
+  const changeCount = editCount + newRows + deleteCount;
   const keyValues = (r: (string | null)[]) => pkIndexes.map((p) => ({ column: columns[p].name, value: r[p] }));
   const discardAll = () => {
     setEdits({});
-    setInserts([]);
+    setDrafts([]);
     setDeletes({});
   };
 
+  function addRow() {
+    setDrafts((all) => [{}, ...all]);
+    setTab("data");
+    // Start in the first column that has no default (an id usually has one).
+    const first = Math.max(0, columns.findIndex((c) => c.default === null));
+    setEditAt({ row: 0, col: first, nonce: Date.now() });
+  }
+
   // A foreign key's arrow sits in its first column; all its columns pick the row.
-  const gridColumns = meta?.columns ?? [];
   const keyAt = (c: number) => info?.foreign_keys.find((fk) => fk.columns[0] === gridColumns[c]?.name);
   const target = (i: number, c: number) => {
     const fk = keyAt(c);
@@ -224,12 +241,20 @@ export function TableView({ connectionId, relation, follow, onOpen }: Props) {
           : null,
     onBlocked: setNotice,
     nullable: columns.map((c) => c.nullable),
+    isNew: (i) => i < newRows,
+    isDefault: (i, c) => i < newRows && !(gridColumns[c]?.name in drafts[i]),
     deleted(i) {
-      const r = rowAt(i);
+      const r = i >= newRows && rowAt(i);
       return !!r && keyOf(r) in deletes;
     },
     onDeleteRows(rows) {
-      const loaded = rows.map(rowAt).filter((r): r is (string | null)[] => !!r);
+      // A new row is just dropped.
+      if (rows.some((i) => i < newRows)) setDrafts((all) => all.filter((_, i) => !rows.includes(i)));
+      const loaded = rows
+        .filter((i) => i >= newRows)
+        .map(rowAt)
+        .filter((r): r is (string | null)[] => !!r);
+      if (loaded.length === 0) return;
       setDeletes((all) => {
         // Marking rows that are all marked already unmarks them.
         const allMarked = loaded.every((r) => keyOf(r) in all);
@@ -242,11 +267,17 @@ export function TableView({ connectionId, relation, follow, onOpen }: Props) {
       });
     },
     pending(i, c) {
+      if (i < newRows) return undefined;
       const r = rowAt(i);
       const change = r && edits[keyOf(r)]?.changes[columns[c].name];
       return change ? change.new : undefined;
     },
     onEdit(i, c, value) {
+      if (i < newRows) {
+        const name = gridColumns[c].name;
+        setDrafts((all) => all.map((d, j) => (j === i ? { ...d, [name]: value } : d)));
+        return;
+      }
       const r = rowAt(i);
       if (!r) return;
       const key = keyOf(r);
@@ -271,7 +302,8 @@ export function TableView({ connectionId, relation, follow, onOpen }: Props) {
         key: e.key,
         changes: Object.entries(e.changes).map(([column, c]) => ({ column, old: c.old, new: c.new })),
       })),
-    inserts,
+    // Oldest first, as they were added.
+    inserts: [...drafts].reverse().map((d) => Object.entries(d).map(([column, value]) => ({ column, value }))),
     deletes: Object.values(deletes),
   });
 
@@ -320,6 +352,26 @@ export function TableView({ connectionId, relation, follow, onOpen }: Props) {
     return () => window.removeEventListener("keydown", onKey);
   });
 
+  // The statements, kept current while shown. A value still being typed isn't a change yet.
+  const previewOpen = !!preview;
+  const changeKey = JSON.stringify([edits, drafts, deletes]);
+  useEffect(() => {
+    if (!previewOpen || changeCount === 0) return;
+    let live = true;
+    api.previewChanges(connectionId, relation, changes()).then(
+      (sql) => live && setPreview({ sql, error: null }),
+      (e) => live && setPreview({ sql: null, error: String(e) }),
+    );
+    return () => {
+      live = false;
+    };
+  }, [previewOpen, changeKey]);
+
+  // Unsaved changes keep a preview tab from being replaced.
+  useEffect(() => {
+    if (changeCount > 0) onPin?.();
+  }, [changeCount > 0]);
+
   /** Every row under the current sort and filters, streamed to a file by the core. */
   async function exportTable(format: ExportFormat) {
     const path = await chooseFile(relation.name, format);
@@ -336,17 +388,9 @@ export function TableView({ connectionId, relation, follow, onOpen }: Props) {
           <span className="muted">{relation.schema}.</span>
           {relation.name}
         </div>
-        <div className="segmented">
-          <button className={tab === "data" ? "on" : ""} onClick={() => setTab("data")}>
-            Data
-          </button>
-          <button className={tab === "structure" ? "on" : ""} onClick={() => setTab("structure")}>
-            Structure
-          </button>
-        </div>
         <span className="grow" />
         {tab === "data" && !edit.blocked && info && (
-          <button className="ghost" onClick={() => setAdding(true)} title="Add a row; saved with ⌘S">
+          <button className="ghost" onClick={addRow} title="Add a row at the top; saved with ⌘S">
             + Row
           </button>
         )}
@@ -363,6 +407,7 @@ export function TableView({ connectionId, relation, follow, onOpen }: Props) {
             ]}
           />
         )}
+        {tab === "data" && <RowPaneButton />}
       </div>
 
       {tab === "data" && filters.length > 0 && (
@@ -405,9 +450,9 @@ export function TableView({ connectionId, relation, follow, onOpen }: Props) {
         meta && (
           <Grid
             columns={meta.columns}
-            rowCount={Math.min(rowCount - base, WINDOW_ROWS)}
-            rowOffset={base}
-            row={(i) => pages[Math.floor((base + i) / PAGE_SIZE)]?.[(base + i) % PAGE_SIZE]}
+            rowCount={Math.min(rowCount - base, WINDOW_ROWS) + newRows}
+            rowOffset={base - newRows}
+            row={rowAt}
             sample={pages[0] ?? []}
             onRange={onRange}
             sort={sort}
@@ -419,24 +464,33 @@ export function TableView({ connectionId, relation, follow, onOpen }: Props) {
             filtered={(c) => filters.some((f) => f.column === meta.columns[c].name)}
             onFilter={(c, anchor) => setFiltering({ column: meta.columns[c].name, anchor })}
             link={link}
+            editAt={editAt}
           />
         )
       ) : (
         info && <Structure info={info} relation={relation} onOpen={onOpen} />
       )}
 
+      {tab === "data" && changeCount > 0 && preview && (
+        <div className="change-preview">
+          {preview.error ? <p className="error">{preview.error}</p> : <pre className="sql-preview">{preview.sql?.join("\n") ?? ""}</pre>}
+        </div>
+      )}
       {tab === "data" && changeCount > 0 && (
         <div className="edit-bar">
           <span>
             {[
               editCount && plural(editCount, "changed value"),
-              inserts.length && plural(inserts.length, "new row"),
+              newRows && plural(newRows, "new row"),
               deleteCount && `${plural(deleteCount, "row")} to delete`,
             ]
               .filter(Boolean)
               .join(" · ")}
           </span>
           <span className="grow" />
+          <button className={`ghost ${preview ? "on" : ""}`} onClick={() => setPreview(preview ? null : { sql: null, error: null })}>
+            {preview ? "Hide statements" : "Show statements"}
+          </button>
           <button className="ghost" onClick={discardAll}>
             Discard
           </button>
@@ -446,17 +500,6 @@ export function TableView({ connectionId, relation, follow, onOpen }: Props) {
         </div>
       )}
 
-      {adding && (
-        <NewRow
-          table={`${relation.schema}.${relation.name}`}
-          columns={columns}
-          onClose={() => setAdding(false)}
-          onAdd={(row) => {
-            setInserts((all) => [...all, row]);
-            setAdding(false);
-          }}
-        />
-      )}
 
       {review && (
         <div className="modal-backdrop" onMouseDown={() => !review.saving && setReview(null)}>
@@ -485,42 +528,50 @@ export function TableView({ connectionId, relation, follow, onOpen }: Props) {
         </div>
       )}
 
-      {tab === "data" && meta && (
-        <footer className="status pager" title={`${meta.sql}\n⌘R reloads`}>
-          <button className="ghost" disabled={currentPage <= 1} onClick={() => goTo(currentPage - 1)}>
-            ‹
-          </button>
-          <span>
-            Page{" "}
-            <input
-              className="page-input"
-              key={currentPage}
-              defaultValue={currentPage}
-              inputMode="numeric"
-              onKeyDown={(e) => {
-                if (e.key === "Enter") goTo(Number(e.currentTarget.value.replace(/\D/g, "")) || 1);
-              }}
-            />{" "}
-            of {exactTotal === null ? "~" : ""}
-            {pageCount.toLocaleString()}
+      <footer className="status pager" title={tab === "data" && meta ? `${meta.sql}\n⌘R reloads` : undefined}>
+        {tab === "data" && meta && (
+          <>
+            <button className="ghost" disabled={currentPage <= 1} onClick={() => goTo(currentPage - 1)}>
+              ‹
+            </button>
+            <span>
+              Page{" "}
+              <input
+                className="page-input"
+                key={currentPage}
+                defaultValue={currentPage}
+                inputMode="numeric"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") goTo(Number(e.currentTarget.value.replace(/\D/g, "")) || 1);
+                }}
+              />{" "}
+              of {exactTotal === null ? "~" : ""}
+              {pageCount.toLocaleString()}
+            </span>
+            <button className="ghost" disabled={currentPage >= pageCount} onClick={() => goTo(currentPage + 1)}>
+              ›
+            </button>
+            <span className="sep">·</span>
+            <span>{totalLabel(count, exactTotal)}</span>
+            <span className="sep">·</span>
+            <span>{meta.elapsed_ms.toFixed(1)} ms</span>
+          </>
+        )}
+        <span className="grow" />
+        {notice && (
+          <span className="ellipsis" onClick={() => setNotice(null)}>
+            {notice}
           </span>
-          <button className="ghost" disabled={currentPage >= pageCount} onClick={() => goTo(currentPage + 1)}>
-            ›
+        )}
+        <div className="segmented">
+          <button className={tab === "data" ? "on" : ""} onClick={() => setTab("data")}>
+            Data
           </button>
-          <span className="sep">·</span>
-          <span>{totalLabel(count, exactTotal)}</span>
-          <span className="sep">·</span>
-          <span>{meta.elapsed_ms.toFixed(1)} ms</span>
-          {notice && (
-            <>
-              <span className="grow" />
-              <span className="ellipsis" onClick={() => setNotice(null)}>
-                {notice}
-              </span>
-            </>
-          )}
-        </footer>
-      )}
+          <button className={tab === "structure" ? "on" : ""} onClick={() => setTab("structure")}>
+            Structure
+          </button>
+        </div>
+      </footer>
     </div>
   );
 }

@@ -29,7 +29,7 @@ import type { Follow } from "./TableView";
 const SQLITE_EXTENSIONS = /\.(db|sqlite|sqlite3|db3)$/i;
 
 type Tab =
-  | { id: string; connectionId: string; kind: "table"; relation: RelationRef; follow?: Follow }
+  | { id: string; connectionId: string; kind: "table"; relation: RelationRef; follow?: Follow; preview?: boolean }
   | { id: string; connectionId: string; kind: "query"; title: string; sql: string; autorun?: Autorun }
   | { id: string; connectionId: string; kind: "insights" }
   | { id: string; connectionId: string; kind: "diagram" }
@@ -182,22 +182,37 @@ export default function App() {
     setActiveTab((a) => ({ ...a, [tab.connectionId]: tab.id }));
   }
 
-  /** With `filters` (following a foreign key), the table opens showing just those rows. */
-  function openTable(relation: RelationRef, filters?: Filter[]) {
+  /**
+   * With `filters` (following a foreign key), the table opens showing just those rows.
+   * A `preview` tab (one click in the sidebar) is replaced by the next preview; opening
+   * the same table for good (double-click) keeps it.
+   */
+  function openTable(relation: RelationRef, filters?: Filter[], preview = false) {
     if (!activeId) return;
     const follow = filters && { filters, nonce: Date.now() };
     const existing = tabs.find((t) => t.connectionId === activeId && t.kind === "table" && sameRelation(t.relation, relation));
     if (existing) {
-      if (follow) setTabs((all) => all.map((t) => (t.id === existing.id ? { ...t, follow } : t)));
+      const keep = existing.kind === "table" && existing.preview && !preview;
+      if (follow || keep)
+        setTabs((all) => all.map((t) => (t.id === existing.id ? { ...t, ...(follow && { follow }), ...(keep && { preview: false }) } : t)));
       return focusTab(existing);
     }
-    const tab: Tab = { id: `t${nextTab++}`, connectionId: activeId, kind: "table", relation, follow };
-    setTabs((all) => [...all, tab]);
+    const tab: Tab = { id: `t${nextTab++}`, connectionId: activeId, kind: "table", relation, follow, preview };
+    const replaced = preview && tabs.find((t) => t.connectionId === activeId && t.kind === "table" && t.preview);
+    setTabs((all) => (replaced ? all.map((t) => (t.id === replaced.id ? tab : t)) : [...all, tab]));
     focusTab(tab);
+  }
+
+  /** A preview tab becomes a normal one (double-click on it, or unsaved changes in it). */
+  function pin(id: string) {
+    setTabs((all) => all.map((t) => (t.id === id && t.kind === "table" && t.preview ? { ...t, preview: false } : t)));
   }
 
   function newQuery(connectionId = activeId, sql = "", autorun?: Autorun) {
     if (!connectionId) return;
+    // A blank query tab nobody typed in yet is used instead of adding another.
+    const blank = !sql && tabs.find((t) => t.connectionId === connectionId && t.kind === "query" && !t.sql.trim());
+    if (blank) return focusTab(blank);
     const n = tabs.filter((t) => t.connectionId === connectionId && t.kind === "query").length + 1;
     const tab: Tab = { id: `t${nextTab++}`, connectionId, kind: "query", title: `Query ${n}`, sql, autorun };
     setTabs((all) => [...all, tab]);
@@ -499,7 +514,9 @@ export default function App() {
                   <div
                     key={r.name}
                     className={`relation ${r.kind} ${currentTab?.kind === "table" && sameRelation(r, currentTab.relation) ? "active" : ""}`}
-                    onClick={() => openTable(r)}
+                    onClick={() => openTable(r, undefined, true)}
+                    onDoubleClick={() => openTable(r)}
+                    title="Click to preview, double-click to keep it open"
                   >
                     <span className="grow ellipsis">{r.name}</span>
                     {r.estimated_rows != null && <span className="count">{compactCount(r.estimated_rows)}</span>}
@@ -521,7 +538,13 @@ export default function App() {
         {active && activeTabs.length > 0 && (
           <div className="tabs" data-tauri-drag-region>
             {activeTabs.map((t) => (
-              <div key={t.id} className={`tab ${t.id === current ? "active" : ""}`} onClick={() => focusTab(t)} onAuxClick={() => closeTab(t.id)}>
+              <div
+                key={t.id}
+                className={`tab ${t.id === current ? "active" : ""} ${t.kind === "table" && t.preview ? "preview" : ""}`}
+                onClick={() => focusTab(t)}
+                onDoubleClick={() => pin(t.id)}
+                onAuxClick={() => closeTab(t.id)}
+              >
                 <span className={`tab-kind ${t.kind}`}>{t.kind === "query" ? "SQL" : ""}</span>
                 <span className="ellipsis">
                   {t.kind === "query"
@@ -608,7 +631,13 @@ export default function App() {
           if (!relation) return null;
           return (
             <div key={t.id} className="tab-page" style={{ display: visible ? "flex" : "none" }}>
-              <TableView connectionId={t.connectionId} relation={relation} follow={t.follow} onOpen={openTable} />
+              <TableView
+                connectionId={t.connectionId}
+                relation={relation}
+                follow={t.follow}
+                onOpen={(r, filters) => openTable(r, filters)}
+                onPin={() => pin(t.id)}
+              />
             </div>
           );
         })}

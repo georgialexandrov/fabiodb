@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { chooseFile, ExportMenu } from "./ExportMenu";
 import { Grid } from "./Grid";
+import { RowPaneButton } from "./rowPane";
 import {
   api,
   fileName,
@@ -267,6 +268,7 @@ export function QueryTab({ connectionId, engine, schema, sql, onSqlChange, visib
         <button className={`ghost ${showHistory ? "on" : ""}`} onClick={() => setShowHistory(!showHistory)} title="History (⌘Y)">
           History
         </button>
+        {result && result.columns.length > 0 && view === "results" && <RowPaneButton />}
       </div>
 
       <div className="query-body">

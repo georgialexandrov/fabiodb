@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { toggleRowPane, useRowPane } from "./rowPane";
 import { api, isNumeric, plural, type ExportFormat, type RelationRef, type ResultColumn, type Rows, type Sort } from "./api";
 
 const ROW_HEIGHT = 26;
@@ -33,6 +34,8 @@ type Props = {
   onFilter?: (col: number, anchor: DOMRect) => void;
   /** Foreign keys: an arrow in their cells follows them; hovering it shows the row they point at. */
   link?: GridLink;
+  /** Selects this cell and starts editing it (a new row's first cell); bump `nonce` to repeat. */
+  editAt?: { row: number; col: number; nonce: number } | null;
 };
 
 export type GridLink = {
@@ -65,35 +68,23 @@ export type GridEdit = {
   deleted: (row: number) => boolean;
   /** Marks the rows, or unmarks them if all are marked already. */
   onDeleteRows: (rows: number[]) => void;
+  /** Rows added here and not saved yet; their untouched cells get the column default. */
+  isNew?: (row: number) => boolean;
+  isDefault?: (row: number, col: number) => boolean;
 };
 
 /** Virtualized, random-access grid. Only on-screen rows are rendered. */
 export function Grid(props: Props) {
   const { columns, rowCount, row, sample, onRange, sort, onSort, scrollTo, rowOffset = 0, edit, table, onNotice } = props;
-  const { filtered, onFilter, link } = props;
+  const { filtered, onFilter, link, editAt } = props;
   const headerCells = useRef<(HTMLDivElement | null)[]>([]);
   const scroller = useRef<HTMLDivElement>(null);
   // `selected` is the active cell; with `anchor` it spans a rectangle (shift-click, shift-arrows).
   const [selected, setSelected] = useState<Cell | null>(null);
   const [anchor, setAnchor] = useState<Cell | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
-  // The selected row, one field per line, beside the grid (⌘I). Remembered across grids.
-  const [rowPane, setRowPane] = useState(() => {
-    try {
-      return localStorage.getItem("fabio.rowPane") === "1";
-    } catch {
-      return false;
-    }
-  });
-  const toggleRowPane = () =>
-    setRowPane((on) => {
-      try {
-        localStorage.setItem("fabio.rowPane", on ? "0" : "1");
-      } catch {
-        // Only this grid remembers it, then.
-      }
-      return !on;
-    });
+  // The selected row, one field per line, beside the grid (⌘I). One setting for all grids.
+  const rowPane = useRowPane();
   const [editing, setEditing] = useState<{ row: number; col: number; draft: string } | null>(null);
   const [detail, setDetail] = useState<{ column: ResultColumn; value: string | null } | null>(null);
   // The row behind a foreign-key arrow, shown while the pointer rests on it.
@@ -225,6 +216,27 @@ export function Grid(props: Props) {
     setEditing(null);
   }
 
+  /** Tab / ⇧Tab: keep the value, edit the next cell in the row. */
+  function commitAndStep(value: string | null, back: boolean) {
+    if (!editing) return;
+    const { row: r, col } = editing;
+    commit(value);
+    const next = col + (back ? -1 : 1);
+    if (next < 0 || next >= columns.length) return;
+    const at = { row: r, col: next };
+    select(at, false);
+    const values = row(r);
+    if (values) setEditing({ ...at, draft: shown(values, r, next) ?? "" });
+  }
+
+  useEffect(() => {
+    if (!editAt) return;
+    const at = { row: editAt.row, col: editAt.col };
+    virtualizer.scrollToIndex(at.row, { align: "auto" });
+    select(at, false);
+    startEdit(at);
+  }, [editAt?.nonce]);
+
   function move(dRow: number, dCol: number, extend: boolean) {
     if (!selected) return;
     const next = {
@@ -283,11 +295,6 @@ export function Grid(props: Props) {
         <div style={{ width: totalWidth, height: virtualizer.getTotalSize() + ROW_HEIGHT, position: "relative" }}>
           <div className="grid-row grid-head" style={{ width: totalWidth }}>
             <div className="grid-cell grid-gutter" style={{ width: gutter }}>
-              <button className={`row-pane-toggle ${rowPane ? "on" : ""}`} onClick={toggleRowPane} title="Row details (⌘I)">
-                <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true">
-                  <path d="M2 2h12v12H2zM10 2v12" fill="none" stroke="currentColor" strokeWidth="1.5" />
-                </svg>
-              </button>
             </div>
             {columns.map((c, i) => (
               <div
@@ -329,7 +336,7 @@ export function Grid(props: Props) {
                 style={{ transform: `translateY(${item.start + ROW_HEIGHT}px)`, width: totalWidth }}
               >
                 <div className="grid-cell grid-gutter" style={{ width: gutter }}>
-                  {(rowOffset + item.index + 1).toLocaleString()}
+                  {edit?.isNew?.(item.index) ? <span className="accent">+</span> : (rowOffset + item.index + 1).toLocaleString()}
                 </div>
                 {columns.map((column, c) => {
                   if (!r) return <div key={c} className="grid-cell" style={{ width: widths[c] }} />;
@@ -344,16 +351,18 @@ export function Grid(props: Props) {
                         nullable={edit?.nullable[c] ?? false}
                         onDraft={(draft) => setEditing({ ...editing, draft })}
                         onCommit={commit}
+                        onStep={commitAndStep}
                         onCancel={() => setEditing(null)}
                       />
                     );
                   }
                   const edited = edit?.pending(item.index, c) !== undefined;
                   const linked = value !== null && !edited && !!link?.has(c);
+                  const byDefault = !edited && !!edit?.isDefault?.(item.index, c);
                   return (
                     <div
                       key={c}
-                      className={`${cellClass(column, value, selected?.row === item.index && selected.col === c)}${edited ? " edited" : ""}${inRange(item.index, c) ? " in-range" : ""}${linked ? " linked" : ""}`}
+                      className={`${cellClass(column, value, selected?.row === item.index && selected.col === c)}${edited ? " edited" : ""}${inRange(item.index, c) ? " in-range" : ""}${linked ? " linked" : ""}${byDefault ? " null" : ""}`}
                       style={{ width: widths[c] }}
                       onClick={(e) => select(at, e.shiftKey)}
                       onContextMenu={(e) => {
@@ -364,7 +373,9 @@ export function Grid(props: Props) {
                       onDoubleClick={() => (edit ? startEdit(at) : setDetail({ column, value }))}
                       title={edited ? `was ${r[c] ?? "NULL"}` : undefined}
                     >
-                      {linked ? (
+                      {byDefault ? (
+                        "DEFAULT"
+                      ) : linked ? (
                         <>
                           <span className="cell-text">{preview(value)}</span>
                           <button
@@ -478,6 +489,14 @@ function RowPane(props: {
 function RowField({ value, nullable, onCommit }: { value: string | null; nullable: boolean; onCommit: (v: string | null) => void }) {
   const [draft, setDraft] = useState(value ?? "");
   useEffect(() => setDraft(value ?? ""), [value]);
+  const box = useRef<HTMLTextAreaElement>(null);
+  // As tall as its text (wrapped lines too), up to a limit.
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    el.style.height = "0";
+    el.style.height = `${Math.min(240, el.scrollHeight + 2)}px`;
+  }, [draft]);
   const commit = () => {
     if (draft !== (value ?? "") || (value === null && draft !== "")) onCommit(draft);
   };
@@ -486,8 +505,9 @@ function RowField({ value, nullable, onCommit }: { value: string | null; nullabl
       <textarea
         spellCheck={false}
         value={draft}
+        ref={box}
         placeholder={value === null ? "NULL" : ""}
-        rows={Math.min(8, Math.max(1, draft.split("\n").length))}
+        rows={1}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={commit}
         onKeyDown={(e) => {
@@ -514,38 +534,55 @@ function CellEditor(props: {
   nullable: boolean;
   onDraft: (draft: string) => void;
   onCommit: (value: string | null) => void;
+  onStep: (value: string | null, back: boolean) => void;
   onCancel: () => void;
 }) {
-  const { width, draft, nullable, onDraft, onCommit, onCancel } = props;
+  const { width, draft, nullable, onDraft, onCommit, onStep, onCancel } = props;
   const done = useRef(false);
+  const box = useRef<HTMLTextAreaElement>(null);
   const finish = (value: string | null | undefined) => {
     if (done.current) return;
     done.current = true;
     value === undefined ? onCancel() : onCommit(value);
   };
+  // Grows with what's typed: wider up to a limit, then taller, over the cells around it.
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const longest = draft.split("\n").reduce((m, line) => Math.max(m, line.length), 0);
+    el.style.width = `${Math.min(560, Math.max(width, longest * CHAR_WIDTH + 30))}px`;
+    el.style.height = "0";
+    el.style.height = `${Math.min(320, Math.max(ROW_HEIGHT, el.scrollHeight))}px`;
+  }, [draft, width]);
   return (
     <div className="grid-cell editing" style={{ width }}>
-      <textarea
-        autoFocus
-        spellCheck={false}
-        value={draft}
-        rows={1}
-        onFocus={(e) => e.currentTarget.select()}
-        onChange={(e) => onDraft(e.target.value)}
-        onBlur={() => finish(draft)}
-        onKeyDown={(e) => {
-          if (e.key === "Escape") finish(undefined);
-          else if (e.key === "Enter" && !e.altKey && !e.shiftKey) finish(draft);
-          else return;
-          e.preventDefault();
-          e.stopPropagation();
-        }}
-      />
-      {nullable && (
-        <button className="set-null" onMouseDown={(e) => (e.preventDefault(), finish(null))} title="Set to NULL">
-          NULL
-        </button>
-      )}
+      <div className="cell-float">
+        <textarea
+          ref={box}
+          autoFocus
+          spellCheck={false}
+          value={draft}
+          rows={1}
+          onFocus={(e) => e.currentTarget.select()}
+          onChange={(e) => onDraft(e.target.value)}
+          onBlur={() => finish(draft)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") finish(undefined);
+            else if (e.key === "Enter" && !e.altKey && !e.shiftKey) finish(draft);
+            else if (e.key === "Tab" && !done.current) {
+              done.current = true;
+              onStep(draft, e.shiftKey);
+            } else return;
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+        />
+        {nullable && (
+          <button className="set-null" onMouseDown={(e) => (e.preventDefault(), finish(null))} title="Set to NULL">
+            NULL
+          </button>
+        )}
+      </div>
     </div>
   );
 }
