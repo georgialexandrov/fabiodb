@@ -7,13 +7,14 @@ Fabio keeps watch over your databases and whistles once when something's wrong.<
 
 ---
 
-Fabio is a native macOS app for browsing, editing and querying Postgres and
-SQLite databases. It does fewer things than most database clients, and puts
-three priorities first:
+Fabio is a desktop app for browsing, editing and querying Postgres and SQLite
+databases. It does fewer things than most database clients, and puts three
+priorities first:
 
-1. **Quiet.** Warm paper,
-   one accent colour, keyboard first, no badges, tips or popups. It stays out
-   of the way until something is actually wrong.
+1. **Quiet.** Typography does the work instead of boxes and icons. One accent
+   colour, and it only marks the thing that matters. Keyboard first, with every
+   shortcut shown next to its action. No badges, tips or popups. A warning
+   appears once, says what happened and what to do, and isn't repeated.
 2. **Readable performance.** Explain turns a query plan into plain sentences,
    and Insights shows what the server is doing right now.
 3. **Agents you can watch.** Claude Code, or any MCP client, can query the
@@ -146,8 +147,12 @@ cd app && pnpm install && pnpm tauri build --bundles app
 open ../target/release/bundle/macos/Fabio.app
 ```
 
-The app is not signed or notarized yet. The first time you open it, macOS may
-ask you to allow it in System Settings → Privacy & Security.
+For a disk image to install from or share, build `--bundles dmg` instead:
+it's written to `target/release/bundle/dmg/Fabio_<version>_<arch>.dmg`
+(about 6 MB). Open it and drag Fabio to Applications.
+
+The app is not signed or notarized yet. The first time you open it, macOS
+blocks it: go to System Settings → Privacy & Security and choose Open Anyway.
 
 ## How it's built
 
