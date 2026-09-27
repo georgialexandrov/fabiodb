@@ -39,6 +39,9 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "copyright": "\u00a9 2026 Georgi Alexandrov. MIT OR Apache-2.0."
+    "copyright": "\u00a9 2026 Georgi Alexandrov. MIT OR Apache-2.0.",
+    "macOS": {
+      "signingIdentity": "-"
+    }
   }
 }

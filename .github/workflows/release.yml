@@ -44,6 +44,15 @@ jobs:
         run: pnpm tauri build --target universal-apple-darwin --bundles dmg
         working-directory: app
 
+      # An unsigned app on Apple Silicon only says "damaged", with no Open Anyway.
+      - name: Check the app inside is signed, for both architectures
+        run: |
+          dmg=$(ls target/universal-apple-darwin/release/bundle/dmg/*.dmg)
+          mnt=$(hdiutil attach -nobrowse -readonly "$dmg" | tail -1 | cut -f3)
+          codesign --verify --deep --strict "$mnt/Fabio.app"
+          lipo -archs "$mnt/Fabio.app/Contents/MacOS/fabiodb" | grep -q "x86_64 arm64"
+          hdiutil detach "$mnt"
+
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
