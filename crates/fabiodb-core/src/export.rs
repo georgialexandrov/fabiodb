@@ -17,6 +17,11 @@ use crate::{Error, RelationRef, Result, ResultColumn};
 #[serde(rename_all = "lowercase")]
 pub enum ExportFormat {
     Csv,
+    /// CSV that spreadsheets open as text: a text value starting with `=`, `+`,
+    /// `-` or `@` gets a leading `'`, so it can't run as a formula. Changes
+    /// the data; plain `Csv` is the faithful one.
+    #[serde(rename = "spreadsheet_csv")]
+    SpreadsheetCsv,
     /// Tab-separated, for pasting into spreadsheets. NULL and "" are both empty.
     Tsv,
     Json,
@@ -79,12 +84,13 @@ impl<W: Write> RowWriter<W> {
         let cols: Vec<_> = columns.iter().map(|c| (c.name.clone(), kind(&c.data_type))).collect();
         let mut insert_prefix = String::new();
         match format {
-            ExportFormat::Csv => {
-                let header: Vec<_> = cols.iter().map(|(n, _)| csv_field(Kind::Text, Some(n))).collect();
+            ExportFormat::Csv | ExportFormat::SpreadsheetCsv => {
+                let safe = format == ExportFormat::SpreadsheetCsv;
+                let header: Vec<_> = cols.iter().map(|(n, _)| csv_field(safe, Kind::Text, Some(n))).collect();
                 write!(out, "{}\r\n", header.join(","))?;
             }
             ExportFormat::Tsv => {
-                let header: Vec<_> = cols.iter().map(|(n, _)| tsv_field(Kind::Text, Some(n))).collect();
+                let header: Vec<_> = cols.iter().map(|(n, _)| tsv_field(Some(n))).collect();
                 writeln!(out, "{}", header.join("\t"))?;
             }
             ExportFormat::Json => out.write_all(b"[")?,
@@ -110,12 +116,13 @@ impl<W: Write> RowWriter<W> {
     pub fn row(&mut self, row: &[Option<String>]) -> Result<()> {
         let values = self.columns.iter().zip(row);
         match self.format {
-            ExportFormat::Csv => {
-                let fields: Vec<_> = values.map(|((_, kind), v)| csv_field(*kind, v.as_deref())).collect();
+            ExportFormat::Csv | ExportFormat::SpreadsheetCsv => {
+                let safe = self.format == ExportFormat::SpreadsheetCsv;
+                let fields: Vec<_> = values.map(|((_, kind), v)| csv_field(safe, *kind, v.as_deref())).collect();
                 write!(self.out, "{}\r\n", fields.join(","))?;
             }
             ExportFormat::Tsv => {
-                let fields: Vec<_> = values.map(|((_, kind), v)| tsv_field(*kind, v.as_deref())).collect();
+                let fields: Vec<_> = values.map(|(_, v)| tsv_field(v.as_deref())).collect();
                 writeln!(self.out, "{}", fields.join("\t"))?;
             }
             ExportFormat::Json => {
@@ -183,25 +190,23 @@ pub(crate) fn remove_on_error<T>(path: &Path, result: Result<T>) -> Result<T> {
 }
 
 /// RFC 4180. NULL is an empty field; an empty string is `""`, so the two stay apart.
-fn csv_field(kind: Kind, value: Option<&str>) -> String {
+fn csv_field(safe: bool, kind: Kind, value: Option<&str>) -> String {
     match value {
         None => String::new(),
         Some("") => "\"\"".into(),
         Some(v) => {
-            let v = spreadsheet_safe(kind, v);
+            let v = if safe { spreadsheet_safe(kind, v) } else { v.to_owned() };
             if v.contains([',', '"', '\n', '\r']) { format!("\"{}\"", v.replace('"', "\"\"")) } else { v }
         }
     }
 }
 
 /// Quoted only when it holds a tab, quote or line break, as spreadsheets expect.
-fn tsv_field(kind: Kind, value: Option<&str>) -> String {
+fn tsv_field(value: Option<&str>) -> String {
     match value {
         None => String::new(),
-        Some(v) => {
-            let v = spreadsheet_safe(kind, v);
-            if v.contains(['\t', '"', '\n', '\r']) { format!("\"{}\"", v.replace('"', "\"\"")) } else { v }
-        }
+        Some(v) if v.contains(['\t', '"', '\n', '\r']) => format!("\"{}\"", v.replace('"', "\"\"")),
+        Some(v) => v.to_owned(),
     }
 }
 

@@ -57,8 +57,10 @@ On Postgres, **Insights** shows active sessions, the most expensive statements
 from `pg_stat_statements`, and index and scan statistics.
 
 **Export and copy.** Tables stream every matching row to CSV, TSV, JSON,
-Markdown or `INSERT` statements (5M rows in 1.3 s using 8 MB of memory). Query
-results save what's on screen and never run the query again. Select a range of
+Markdown or `INSERT` statements (5M rows in 1.3 s using 8 MB of memory).
+Exports keep values exactly as they are; "CSV for spreadsheets" puts a `'` in
+front of text starting with `=`, `+`, `-` or `@`, so a spreadsheet can't run it
+as a formula. Query results save what's on screen and never run the query again. Select a range of
 cells and copy it as TSV, CSV, Markdown, JSON or `INSERT`.
 
 **Stay oriented.** ⌘K finds tables, connections, snippets and actions. ⇧⌘K
@@ -83,7 +85,8 @@ goes over them.
 ## Connections
 
 - **Postgres:** fill in the fields, or paste a `postgres://` URL. SSL modes
-  from `disable` to `verify-full`, with your own CA file. SSH tunnels go
+  from `disable` to `verify-full`, with your own CA file. Remote servers default
+  to `verify-full`; this machine (localhost, Docker) to `prefer`. SSH tunnels go
   through the system `ssh`, so your keys, agent and `~/.ssh/config` just work.
   Passwords are stored in the macOS Keychain, never in a file.
 - **SQLite:** ⌘O, or drop the file on the window. It opens read-only and is
@@ -120,7 +123,8 @@ What the agent **can't** do:
   in Fabio's Agent panel.
 
 A read-only transaction is not a full sandbox, so Postgres agent access refuses
-superusers and roles with server-wide, server-file, or server-program privileges.
+superusers, roles with server-wide, server-file or server-program privileges, and
+members of `pg_signal_backend` (they could end other sessions).
 Use a dedicated login with only the schemas and tables the agent should read.
 
 ## Keys

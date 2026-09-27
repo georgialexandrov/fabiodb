@@ -49,6 +49,18 @@ pub struct PgTarget {
     pub ca_cert: Option<PathBuf>,
 }
 
+impl SslMode {
+    /// The default when none is given: verify the server's certificate, except
+    /// on this machine (local servers and Docker rarely have TLS, and the
+    /// traffic doesn't leave the host).
+    pub fn for_host(host: &str) -> SslMode {
+        let local = host == "localhost"
+            || host.starts_with('/')
+            || host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback());
+        if local { SslMode::Prefer } else { SslMode::VerifyFull }
+    }
+}
+
 impl PgTarget {
     pub fn from_url(url: &str) -> Result<PgTarget> {
         // tokio-postgres knows neither verify mode nor sslrootcert; take them out first.
@@ -61,13 +73,14 @@ impl PgTarget {
             None => "localhost".into(),
         };
         let user = config.get_user().unwrap_or_default().to_owned();
+        let ssl = ssl.unwrap_or_else(|| SslMode::for_host(&host));
         Ok(PgTarget {
             host,
             port: config.get_ports().first().copied().unwrap_or(5432),
             database: config.get_dbname().map_or_else(|| user.clone(), str::to_owned),
             user,
             password: config.get_password().map(|p| String::from_utf8_lossy(p).into_owned()),
-            ssl: ssl.unwrap_or_default(),
+            ssl,
             ca_cert,
             ssh: None,
         })
@@ -225,8 +238,8 @@ impl Pg {
         &self.client
     }
 
-    /// A read-only transaction cannot sandbox superusers or roles that can
-    /// touch server files/programs. Agent access is refused for such accounts;
+    /// A read-only transaction cannot sandbox superusers, roles that can touch
+    /// server files/programs, or ones that can cancel and end other sessions. Agent access is refused for such accounts;
     /// it must use a deliberately least-privilege login.
     pub(crate) async fn ensure_safe_agent_role(&self) -> Result<()> {
         let row = self
@@ -236,12 +249,13 @@ impl Pg {
                         r.rolreplication, r.rolbypassrls,
                         pg_has_role(current_user, 'pg_read_server_files', 'MEMBER'),
                         pg_has_role(current_user, 'pg_write_server_files', 'MEMBER'),
-                        pg_has_role(current_user, 'pg_execute_server_program', 'MEMBER')
+                        pg_has_role(current_user, 'pg_execute_server_program', 'MEMBER'),
+                        pg_has_role(current_user, 'pg_signal_backend', 'MEMBER')
                    FROM pg_roles r WHERE r.rolname = current_user",
                 &[],
             )
             .await?;
-        let privileged = (0..8).any(|i| row.get::<_, bool>(i));
+        let privileged = (0..row.len()).any(|i| row.get::<_, bool>(i));
         if privileged {
             return Err(Error::Invalid(
                 "Agent access needs a least-privilege Postgres login. Superusers and roles with server-wide or server-file privileges are refused."

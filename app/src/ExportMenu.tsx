@@ -4,7 +4,7 @@ import type { ExportFormat } from "./api";
 
 export type ExportItem = { label: string; run: () => Promise<string | null> } | "separator";
 
-const EXTENSIONS: Record<ExportFormat, string> = { csv: "csv", tsv: "tsv", json: "json", markdown: "md", insert: "sql" };
+const EXTENSIONS: Record<ExportFormat, string> = { csv: "csv", spreadsheet_csv: "csv", tsv: "tsv", json: "json", markdown: "md", insert: "sql" };
 
 /** Asks where to save; `null` when the dialog is cancelled. */
 export async function chooseFile(baseName: string, format: ExportFormat): Promise<string | null> {

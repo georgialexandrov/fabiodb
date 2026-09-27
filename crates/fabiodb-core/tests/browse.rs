@@ -30,12 +30,16 @@ fn parses_a_postgres_url_into_fields() {
 }
 
 #[test]
-fn url_defaults_verify_the_server() {
+fn url_defaults_verify_remote_servers_only() {
     let t = PgTarget::from_url("postgres://me@localhost/app").unwrap();
 
     assert_eq!(t.port, 5432);
-    assert_eq!(t.ssl, SslMode::VerifyFull);
+    assert_eq!(t.ssl, SslMode::Prefer);
     assert_eq!(t.password, None);
+    assert_eq!(PgTarget::from_url("postgres://me@127.0.0.1/app").unwrap().ssl, SslMode::Prefer);
+    assert_eq!(PgTarget::from_url("postgres://me@[::1]/app").unwrap().ssl, SslMode::Prefer);
+    assert_eq!(PgTarget::from_url("postgres://me@db.example.com/app").unwrap().ssl, SslMode::VerifyFull);
+    assert_eq!(PgTarget::from_url("postgres://me@db.example.com/app?sslmode=prefer").unwrap().ssl, SslMode::Prefer);
 }
 
 // --- relations ------------------------------------------------------------

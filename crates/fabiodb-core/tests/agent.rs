@@ -295,3 +295,26 @@ async fn postgres_agent_refuses_a_privileged_login() {
     let err = ReadOnlyDb::open(&postgres_target(), limits()).await.err().unwrap();
     assert!(err.to_string().contains("least-privilege"), "{err}");
 }
+
+#[tokio::test]
+async fn postgres_agent_refuses_a_login_that_can_end_other_sessions() {
+    let admin = postgres().await;
+    admin.set_writable(true).await.unwrap();
+    admin
+        .query(
+            "DO $$ BEGIN
+               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'fabio_signal') THEN
+                 CREATE ROLE fabio_signal LOGIN;
+               END IF;
+             END $$;
+             GRANT pg_signal_backend TO fabio_signal",
+        )
+        .await
+        .unwrap();
+    let mut target = postgres_target();
+    if let Target::Postgres(pg) = &mut target {
+        pg.user = "fabio_signal".into();
+    }
+    let err = ReadOnlyDb::open(&target, limits()).await.err().unwrap();
+    assert!(err.to_string().contains("least-privilege"), "{err}");
+}

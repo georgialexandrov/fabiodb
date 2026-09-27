@@ -154,8 +154,8 @@ current one's exit criteria hold.
     `SET`s outlives it
   - only reading statements (SELECT, WITH, VALUES, TABLE, SHOW, EXPLAIN): a
     read-only transaction still lets a superuser `COPY … TO PROGRAM` or run `DO`
-  - Postgres superusers and roles with server-wide, server-file, or
-    server-program privileges are refused; agent access needs a dedicated
+  - Postgres superusers, roles with server-wide, server-file, or
+    server-program privileges, and `pg_signal_backend` members are refused; agent access needs a dedicated
     least-privilege login
   - `statement_timeout` (default 10 s), hard row cap (default 500)
   - SQLite: opened read-only + `PRAGMA query_only = ON` (set again before each

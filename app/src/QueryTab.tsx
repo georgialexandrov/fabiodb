@@ -253,6 +253,7 @@ export function QueryTab({ connectionId, engine, schema, sql, onSqlChange, visib
             }
             items={[
               { label: "CSV…", run: () => saveResult("csv") },
+              { label: "CSV for spreadsheets…", run: () => saveResult("spreadsheet_csv") },
               { label: "JSON…", run: () => saveResult("json") },
               "separator",
               { label: "Copy as Markdown", run: () => copyResult("markdown", "Markdown") },

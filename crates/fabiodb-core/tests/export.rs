@@ -177,9 +177,17 @@ fn tsv_is_for_pasting_into_spreadsheets() {
 }
 
 #[test]
-fn spreadsheet_exports_neutralize_formulas_but_keep_numbers() {
+fn spreadsheet_csv_neutralizes_formulas_but_keeps_numbers() {
     let columns = vec![col("=header", "text"), col("amount", "numeric")];
     let rows = vec![vec![v("=HYPERLINK(\"https://evil.invalid\")"), v("-12.5")]];
-    let csv = format_rows(ExportFormat::Csv, &columns, &rows, None).unwrap();
+    let csv = format_rows(ExportFormat::SpreadsheetCsv, &columns, &rows, None).unwrap();
     assert_eq!(csv, "'=header,amount\r\n\"'=HYPERLINK(\"\"https://evil.invalid\"\")\",-12.5\r\n");
+}
+
+#[test]
+fn csv_and_tsv_keep_values_as_they_are() {
+    let columns = vec![col("phone", "text")];
+    let rows = vec![vec![v("+359 88 123")], vec![v("=1+1")]];
+    assert_eq!(format_rows(ExportFormat::Csv, &columns, &rows, None).unwrap(), "phone\r\n+359 88 123\r\n=1+1\r\n");
+    assert_eq!(format_rows(ExportFormat::Tsv, &columns, &rows, None).unwrap(), "phone\n+359 88 123\n=1+1\n");
 }

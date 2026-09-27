@@ -301,6 +301,7 @@ export function TableView({ connectionId, relation, onOpen }: Props) {
             note={filters.length > 0 ? "All rows that match the filters." : "All rows, in the grid's order."}
             items={[
               { label: "CSV…", run: () => exportTable("csv") },
+              { label: "CSV for spreadsheets…", run: () => exportTable("spreadsheet_csv") },
               { label: "JSON…", run: () => exportTable("json") },
               { label: "INSERT statements…", run: () => exportTable("insert") },
             ]}

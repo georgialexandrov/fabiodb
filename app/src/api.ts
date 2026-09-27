@@ -142,7 +142,7 @@ export type RowUpdate = { key: ColumnValue[]; changes: { column: string; old: st
 /** One save: edits, then deletions (by primary key), then new rows (columns left out take defaults). */
 export type Changes = { updates: RowUpdate[]; inserts: ColumnValue[][]; deletes: ColumnValue[][] };
 
-export type ExportFormat = "csv" | "tsv" | "json" | "markdown" | "insert";
+export type ExportFormat = "csv" | "spreadsheet_csv" | "tsv" | "json" | "markdown" | "insert";
 
 export type CompletionTable = { schema: string; name: string; columns: string[] };
 

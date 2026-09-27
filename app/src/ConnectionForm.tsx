@@ -5,7 +5,7 @@ import { api, type SavedConnection, type SslMode, type Target } from "./api";
 const NEW_POSTGRES: SavedConnection = {
   id: "",
   name: "",
-  target: { engine: "postgres", host: "localhost", port: 5432, user: "postgres", password: null, database: "postgres", ssl: "verify-full", ca_cert: null },
+  target: { engine: "postgres", host: "localhost", port: 5432, user: "postgres", password: null, database: "postgres", ssl: "prefer", ca_cert: null },
   agent: false,
 };
 
@@ -18,6 +18,13 @@ type Props = {
   onClose: () => void;
 };
 
+/** As the core's SslMode::for_host: verify remote servers, not this machine. */
+function sslFor(host: string): SslMode {
+  const h = host.trim().replace(/^\[|\]$/g, "");
+  const local = h === "localhost" || h.startsWith("/") || h === "::1" || /^127\./.test(h);
+  return local ? "prefer" : "verify-full";
+}
+
 export function ConnectionForm({ initial, groups, onSaved, onDeleted, onClose }: Props) {
   const [conn, setConn] = useState<SavedConnection>(initial ?? NEW_POSTGRES);
   // null = leave the saved password alone
@@ -25,6 +32,8 @@ export function ConnectionForm({ initial, groups, onSaved, onDeleted, onClose }:
   const [hasSaved, setHasSaved] = useState(false);
   const [status, setStatus] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  // Until the user picks one, SSL follows the host (see sslFor).
+  const [sslChosen, setSslChosen] = useState(!!initial?.id);
 
   useEffect(() => {
     if (initial?.id) api.hasPassword(initial.id).then(setHasSaved, () => {});
@@ -126,7 +135,11 @@ export function ConnectionForm({ initial, groups, onSaved, onDeleted, onClose }:
             <div className="row">
               <label className="grow">
                 Host
-                <input spellCheck={false} value={t.host} onChange={(e) => setTarget({ host: e.target.value })} />
+                <input
+                  spellCheck={false}
+                  value={t.host}
+                  onChange={(e) => setTarget(sslChosen ? { host: e.target.value } : { host: e.target.value, ssl: sslFor(e.target.value) })}
+                />
               </label>
               <label className="port">
                 Port
@@ -159,7 +172,10 @@ export function ConnectionForm({ initial, groups, onSaved, onDeleted, onClose }:
               </label>
               <label>
                 SSL
-                <select value={t.ssl} onChange={(e) => setTarget({ ssl: e.target.value as SslMode })}>
+                <select value={t.ssl} onChange={(e) => {
+                    setSslChosen(true);
+                    setTarget({ ssl: e.target.value as SslMode });
+                  }}>
                   <option value="disable">disable</option>
                   <option value="prefer">prefer (allows plaintext)</option>
                   <option value="require">require (certificate not verified)</option>
