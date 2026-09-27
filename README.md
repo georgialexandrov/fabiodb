@@ -209,6 +209,7 @@ text in the app is written).
 dev/pg.sh start            # local Postgres 18 on :54329 with the Chinook sample
 dev/check.sh               # what CI runs: fmt, tsc, Vitest, clippy, core + MCP tests
 dev/check.sh --budgets     # also builds the release app and checks the budgets
+dev/build.sh               # release app + MCP server, signed with "Fabio Local" if present
 cd app && pnpm tauri dev   # run with hot reload
 ```
 

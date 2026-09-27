@@ -52,6 +52,7 @@ export PATH=/opt/homebrew/opt/rustup/bin:$PATH   # already in ~/.zshrc
 dev/pg.sh start                                   # core tests and the app's Chinook PG
 dev/check.sh                                      # fmt, tsc, 16 Vitest, clippy, 127 core + 8 MCP tests
 dev/check.sh --budgets                            # + release build: start, scroll, bundle
+dev/build.sh                                      # local release build, signed with "Fabio Local" (Keychain "Always Allow" sticks)
 cd app && pnpm tauri dev                          # run with hot reload
 ```
 
