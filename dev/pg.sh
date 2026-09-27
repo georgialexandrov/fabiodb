@@ -25,6 +25,9 @@ load() {
     "$psql" -d postgres -q -v ON_ERROR_STOP=1 -f "$DIR/data/Chinook_PostgreSql.sql" >/dev/null
     "$psql" -d chinook -qc "create extension if not exists pg_stat_statements"
   fi
+  # Tests expect track analyzed and genre not. Autovacuum gets to track only
+  # eventually (a fresh CI server often hadn't), and never to genre: too small.
+  "$psql" -d chinook -qc "analyze track"
   # A table big enough that counting it is slow: tests the count timeout,
   # and gives Phase 3 something worth explaining.
   if ! "$psql" -d chinook -tAc "select to_regclass('perf.big')" | grep -q big; then
