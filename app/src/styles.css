@@ -82,9 +82,11 @@ select:focus, input:focus, textarea:focus { border-color: var(--accent); }
 
 /* --- layout -------------------------------------------------------------- */
 
-.app { display: grid; grid-template-columns: 240px 1fr; height: 100vh; }
+/* minmax(0, …): wide content (Structure, long values) scrolls inside, never widens the window. */
+.app { display: grid; grid-template-columns: var(--sidebar-w, 240px) minmax(0, 1fr); height: 100vh; }
 
 .sidebar {
+  position: relative;
   background: var(--sidebar);
   border-right: 1px solid var(--line);
   display: flex;
@@ -188,14 +190,14 @@ select:focus, input:focus, textarea:focus { border-color: var(--accent); }
 .grid-cell.null { color: var(--muted); font-style: italic; }
 .grid-cell.selected { background: var(--accent-soft); outline: 1px solid var(--accent); outline-offset: -1px; }
 
-.value-panel { width: 360px; border-left: 1px solid var(--line); display: flex; flex-direction: column; background: var(--surface); }
+.value-panel { position: relative; flex: none; width: var(--panel-w, 340px); border-left: 1px solid var(--line); display: flex; flex-direction: column; background: var(--surface); }
 .value-panel header, .value-panel footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; }
 .value-panel pre { flex: 1; margin: 0; padding: 8px 12px; overflow: auto; font-family: var(--mono); font-size: 12px; white-space: pre-wrap; word-break: break-word; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .value-panel pre.null { color: var(--muted); font-style: italic; }
 
 /* --- structure ----------------------------------------------------------- */
 
-.structure { overflow: auto; padding: 4px 16px 24px; }
+.structure { flex: 1; min-height: 0; overflow: auto; padding: 4px 16px 24px; }
 .structure h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.4px; color: var(--muted); margin: 20px 0 6px; }
 .structure table { border-collapse: collapse; width: 100%; max-width: 900px; }
 .structure td, .structure th { text-align: left; padding: 5px 10px 5px 0; border-bottom: 1px solid var(--line); font-family: var(--mono); font-size: 12px; }
@@ -349,7 +351,7 @@ button:disabled { opacity: 0.4; }
 /* Row details (⌘I) */
 button.icon { display: inline-flex; align-items: center; padding: 3px 5px; }
 button.icon.on { color: var(--accent); }
-.row-pane { width: 340px; border-left: 1px solid var(--line); display: flex; flex-direction: column; background: var(--surface); min-height: 0; }
+.row-pane { position: relative; flex: none; width: var(--panel-w, 340px); border-left: 1px solid var(--line); display: flex; flex-direction: column; background: var(--surface); min-height: 0; }
 .row-pane header { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--muted); }
 .row-pane-fields { overflow: auto; padding: 4px 0; }
 .row-field { display: flex; flex-direction: column; gap: 2px; padding: 6px 12px; }
@@ -430,3 +432,10 @@ button.icon.on { color: var(--accent); }
 
 /* A preview tab: replaced by the next table you click, until you keep it. */
 .tab.preview .ellipsis { font-style: italic; }
+
+/* Drag handles on panel edges. */
+.resize-handle { position: absolute; top: 0; bottom: 0; width: 7px; z-index: 5; cursor: col-resize; }
+.resize-handle.right { right: -4px; }
+.resize-handle.left { left: -4px; }
+.resize-handle:hover, body.resizing .resize-handle { background: linear-gradient(90deg, transparent 3px, var(--accent) 3px 4px, transparent 4px); }
+body.resizing, body.resizing * { cursor: col-resize !important; -webkit-user-select: none; user-select: none; }

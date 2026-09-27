@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { ResizeHandle } from "./resize";
 import { toggleRowPane, useRowPane } from "./rowPane";
 import { api, isNumeric, plural, type ExportFormat, type RelationRef, type ResultColumn, type Rows, type Sort } from "./api";
 
@@ -459,6 +460,7 @@ function RowPane(props: {
   const { columns, rowNumber, values, edited, edit, onClose } = props;
   return (
     <aside className="row-pane">
+      <ResizeHandle name="panel" />
       <header>
         <span>{rowNumber === null ? "No row selected" : `Row ${rowNumber.toLocaleString()}`}</span>
         <button className="ghost" onClick={onClose} title="Hide (⌘I)">
@@ -598,6 +600,7 @@ function ValuePanel({ column, value, onClose }: { column: ResultColumn; value: s
   }
   return (
     <aside className="value-panel">
+      <ResizeHandle name="panel" />
       <header>
         <span>
           {column.name} <span className="muted">{column.data_type}</span>

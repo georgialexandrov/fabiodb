@@ -25,6 +25,7 @@ import {
 } from "./api";
 
 import type { Follow } from "./TableView";
+import { ResizeHandle } from "./resize";
 
 const SQLITE_EXTENSIONS = /\.(db|sqlite|sqlite3|db3)$/i;
 
@@ -423,6 +424,7 @@ export default function App() {
   return (
     <div className="app">
       <aside className="sidebar">
+        <ResizeHandle name="sidebar" />
         <div className="sidebar-head" data-tauri-drag-region>
           <span className="brand">Fabio</span>
           <span className="grow" />
