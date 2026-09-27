@@ -110,6 +110,11 @@ rolled back) with findings and plan tree, SQLite query plan, Insights.
   query tabs say so); tabs, query text, workspace and window restored on launch.
 - **Look and feel:** dark mode (System/Light/Dark, ⇧⌘L), native menu bar with
   About box, window shown only once painted.
+- **DBML and diagram (v0.2):** `Db::schema()` (5 pipelined catalog queries),
+  `dbml()` validated against the reference parser, MCP tool `schema`; Diagram
+  tab (⇧⌘D) with drag, zoom, Arrange, Export DBML…; `links.json` + macOS
+  bookmarks (`app/src-tauri/src/bookmark.rs`, tested across a folder rename);
+  layouts next to the DBML or in `layouts/`. Not yet seen on screen.
 - **Speed:** views and dialogs lazy (main JS 262 KB), cold start 267–284 ms,
   scroll 100k rows at 60 fps with 0% dropped (DOM grid is enough; no canvas).
 

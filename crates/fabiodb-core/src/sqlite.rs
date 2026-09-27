@@ -8,8 +8,8 @@ use crate::edit::{self, Changes, EditDialect};
 use crate::export::{self, ExportFormat, RowWriter};
 use crate::sql::{self, Dialect, quote};
 use crate::{
-    Canceller, Column, CompletionTable, Count, Error, Filter, ForeignKey, Index, Page, PageRequest, QueryResult,
-    Relation, RelationKind, RelationRef, Result, ResultColumn, Rows, Sort, TableInfo,
+    Canceller, Column, CompletionTable, Count, Engine, Error, Filter, ForeignKey, Index, Page, PageRequest,
+    QueryResult, Relation, RelationKind, RelationRef, Result, ResultColumn, Rows, Schema, SchemaTable, Sort, TableInfo,
 };
 
 /// SQLite calls are blocking, so every call hops to the blocking pool.
@@ -169,6 +169,23 @@ impl Lite {
         self.with(move |conn| describe(conn, &relation)).await
     }
 
+    pub async fn schema(&self) -> Result<Schema> {
+        let tables: Vec<_> = self.relations().await?.into_iter().filter(|r| r.kind == RelationKind::Table).collect();
+        let database = self.path.file_name().map_or_else(String::new, |f| f.to_string_lossy().into_owned());
+        self.with(move |conn| {
+            let tables = tables
+                .into_iter()
+                .map(|r| {
+                    let relation = RelationRef { schema: r.schema, name: r.name };
+                    let info = describe(conn, &relation)?;
+                    Ok(SchemaTable { schema: relation.schema, name: relation.name, comment: None, info })
+                })
+                .collect::<Result<_>>()?;
+            Ok(Schema { engine: Engine::Sqlite, database, tables, enums: vec![] })
+        })
+        .await
+    }
+
     pub async fn count(&self, relation: &RelationRef, filters: &[Filter], timeout: Duration) -> Result<Count> {
         let interrupt = self.conn.lock().expect("sqlite connection poisoned").get_interrupt_handle();
         let (relation, filters) = (relation.clone(), filters.to_vec());
@@ -284,6 +301,7 @@ fn describe(conn: &Connection, relation: &RelationRef) -> Result<TableInfo> {
                 nullable: !r.get::<_, bool>(2)?,
                 default: r.get(3)?,
                 primary_key: r.get::<_, i64>(4)? > 0,
+                comment: None,
             })
         })?
         .collect::<rusqlite::Result<_>>()?;

@@ -20,7 +20,7 @@ use serde::Serialize;
 
 use crate::{
     AuditLog, Db, Error, Insights, NewAuditEntry, Page, PageRequest, Plan, QueryResult, Relation, RelationRef, Result,
-    SavedConnection, Source, Store, TableInfo, Target,
+    SavedConnection, Schema, Source, Store, TableInfo, Target,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -101,6 +101,11 @@ impl ReadOnlyDb {
     pub async fn insights(&self) -> Result<Insights> {
         let _guard = self.gate.lock().await;
         self.db.insights().await
+    }
+
+    pub async fn schema(&self) -> Result<Schema> {
+        let _guard = self.gate.lock().await;
+        self.db.schema().await
     }
 }
 
@@ -214,6 +219,11 @@ impl Agent {
 
     pub async fn insights(&self, connection: &str) -> Result<Insights> {
         self.db(connection).await?.1.insights().await
+    }
+
+    /// The whole schema as DBML, in one call.
+    pub async fn schema_dbml(&self, connection: &str) -> Result<String> {
+        Ok(crate::dbml(&self.db(connection).await?.1.schema().await?, None))
     }
 
     pub async fn query(&self, connection: &str, sql: &str) -> Result<QueryResult> {

@@ -104,7 +104,7 @@ fn lists_its_tools() {
         tools["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
     assert_eq!(
         names,
-        ["list_connections", "list_tables", "describe_table", "sample_rows", "query", "explain", "insights"]
+        ["list_connections", "schema", "list_tables", "describe_table", "sample_rows", "query", "explain", "insights"]
     );
 }
 
@@ -137,6 +137,11 @@ fn browses_tables_in_both_engines() {
 
     let (text, _) = server.call("sample_rows", json!({"connection": "pg", "table": "artist", "rows": 3}));
     assert!(text.contains("AC/DC"), "{text}");
+
+    let (text, _) = server.call("schema", json!({"connection": "pg"}));
+    assert!(text.contains("Ref track_album_id_fkey: track.album_id > album.album_id"), "{text}");
+    let (text, _) = server.call("schema", json!({"connection": "lite"}));
+    assert!(text.contains("Table Track {"), "{text}");
 }
 
 #[test]

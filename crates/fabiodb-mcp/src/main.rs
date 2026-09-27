@@ -24,7 +24,7 @@ const KEYCHAIN_SERVICE: &str = "dev.alexandrov.fabio";
 const PROTOCOL_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
 
 const INSTRUCTIONS: &str = "Fabio gives read-only access to the databases its user marked for agents \
-(Postgres and SQLite). Start with list_connections, then list_tables and describe_table. \
+(Postgres and SQLite). Start with list_connections, then schema (every table, key and index as DBML, in one call). \
 Each call runs one statement; results are capped at 500 rows and statements stop after 10 s. \
 To find out why a query is slow, use explain: it returns Fabio's findings and the plan. \
 The user sees every statement you run in Fabio's agent panel.";

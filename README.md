@@ -68,6 +68,14 @@ switches connection and ⌘D switches database on the same server, each with its
 own tabs. Fabio reconnects after sleep, network changes and server restarts,
 and reopens your tabs, query text and window where you left them.
 
+**See the schema.** ⇧⌘D draws every table and its references from the live
+schema. Drag tables where they make sense; double-click one to open it.
+"Export DBML…" writes the schema as [DBML](https://dbml.dbdiagram.io/docs/)
+(`schema.dbml`) with the positions in a file next to it (`schema.layout.json`),
+so the model stays readable for people and agents, and a moved table is a
+one-line diff. Fabio remembers where you saved them, even after the folder is
+moved or renamed, and says once when the file no longer matches the database.
+
 ## Numbers
 
 Measured on a MacBook with a release build (`bench/startup.py`; details in
@@ -106,7 +114,8 @@ claude mcp add fabio -- "$PWD/target/release/fabiodb-mcp"
 ```
 
 Then tick **Agents can query** on the connections you want to share. The agent
-can list tables, describe them, sample rows, run queries, explain them (with
+can read the whole schema as DBML in one call, list tables, describe them,
+sample rows, run queries, explain them (with
 Fabio's findings), and read Insights. Connections can only be created and
 opened to agents in the desktop app.
 
@@ -139,6 +148,7 @@ Use a dedicated login with only the schemas and tables the agent should read.
 | ⌘S | Review and save edits (tables), save a snippet (queries) |
 | ⌘I | Row details |
 | ⌘F | Filter the selected column |
+| ⇧⌘D | Diagram |
 | ⇧⌘L | Theme: system, light, dark |
 
 ## Install

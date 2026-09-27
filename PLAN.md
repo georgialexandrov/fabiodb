@@ -209,10 +209,30 @@ ranges + copy as, ⌘K, snippets, dark mode, SSL verify modes.
 13. **Release** — licence, README, About box, signed + notarized DMG, the
     `fabiodb` rename, CI green on GitHub.
 
+### v0.2 — DBML and diagrams (added 2026-09-27)
+
+1. **DBML** — the schema as DBML, written from the database, never run.
+   `Db::schema()` reads every table in five pipelined catalog queries (SQLite:
+   pragmas), however many tables. MCP tool `schema` gives an agent the whole
+   model in one call.
+2. **Diagram** (⇧⌘D) — read-only, from the live schema. Fixed-size cards (no
+   text measuring), laid out left to right by reference depth, one ordering
+   sweep; saved positions win. Lazy chunk; cards memoized so a drag re-renders
+   one table.
+3. **Where files live** — the model and its layout sit side by side
+   (`schema.dbml`, `schema.layout.json`: sorted keys, whole pixels, written on
+   drop). `links.json` in the app folder maps each workspace to its file, with
+   a macOS bookmark so a moved or renamed folder is still found. Unlinked
+   layouts live in the app folder. A stale or missing file is said once.
+4. **Next: charts on results** — bar/line/scatter chosen from column types, as
+   a view of a query result (SQL + spec, never an image); then the same from
+   an agent through MCP. No dashboards, no chart library, no styling options.
+
 ## Non-goals
 
 Databases other than Postgres and SQLite. Performance tooling for SQLite beyond
-the query plan. ER diagrams. Schema migration tooling. Team/cloud sync.
+the query plan. Editing the schema from the diagram, or generating migrations
+from DBML: the diagram shows the database, it doesn't change it. Schema migration tooling. Team/cloud sync.
 A built-in chat UI with its own LLM keys (MCP covers it; revisit after Phase 4).
 
 ## Risks

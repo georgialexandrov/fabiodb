@@ -10,6 +10,8 @@
 
 mod agent;
 mod audit;
+mod dbml;
+mod diagram;
 mod discover;
 mod edit;
 mod export;
@@ -28,6 +30,8 @@ use serde::{Deserialize, Serialize};
 
 pub use agent::{Agent, AgentConnection, Keychain, Limits, ReadOnlyDb};
 pub use audit::{AuditEntry, AuditLog, NewAuditEntry, Source};
+pub use dbml::dbml;
+pub use diagram::{Layout, Link, Links, layout_path};
 pub use discover::{Discovered, Discovery, discover};
 pub use edit::{CellChange, Changes, ColumnValue, RowUpdate};
 pub use export::{ExportFormat, RowWriter, format_rows};
@@ -128,6 +132,16 @@ impl Db {
         match self {
             Db::Postgres(pg) => pg.describe(relation).await,
             Db::Sqlite(lite) => lite.describe(relation).await,
+        }
+    }
+
+    /// Every table with its columns, keys and indexes, plus enum types: the
+    /// model behind DBML and the diagram. A few catalog queries in all, not
+    /// one per table.
+    pub async fn schema(&self) -> Result<Schema> {
+        match self {
+            Db::Postgres(pg) => pg.schema().await,
+            Db::Sqlite(lite) => lite.schema().await,
         }
     }
 
@@ -290,6 +304,9 @@ pub struct Column {
     pub nullable: bool,
     pub default: Option<String>,
     pub primary_key: bool,
+    /// `COMMENT ON COLUMN`. Postgres only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
     /// Type without modifiers, used to cast filter values. Postgres only.
     #[serde(skip)]
     pub(crate) base_type: String,
@@ -318,6 +335,40 @@ pub struct TableInfo {
     pub columns: Vec<Column>,
     pub indexes: Vec<Index>,
     pub foreign_keys: Vec<ForeignKey>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Schema {
+    pub engine: Engine,
+    /// The database's name; the file name for SQLite.
+    pub database: String,
+    pub tables: Vec<SchemaTable>,
+    pub enums: Vec<EnumType>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Engine {
+    Postgres,
+    Sqlite,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SchemaTable {
+    pub schema: String,
+    pub name: String,
+    /// `COMMENT ON TABLE`. Postgres only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
+    #[serde(flatten)]
+    pub info: TableInfo,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct EnumType {
+    pub schema: String,
+    pub name: String,
+    pub values: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

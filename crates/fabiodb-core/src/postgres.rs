@@ -10,8 +10,8 @@ use crate::edit::{self, Changes, EditDialect};
 use crate::export::{self, ExportFormat, RowWriter};
 use crate::sql::{self, Dialect, quote};
 use crate::{
-    Canceller, Column, CompletionTable, Count, Error, Filter, ForeignKey, Index, Page, PageRequest, QueryResult,
-    Relation, RelationKind, RelationRef, Result, ResultColumn, Sort, TableInfo,
+    Canceller, Column, CompletionTable, Count, Engine, EnumType, Error, Filter, ForeignKey, Index, Page, PageRequest,
+    QueryResult, Relation, RelationKind, RelationRef, Result, ResultColumn, Schema, SchemaTable, Sort, TableInfo,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -413,7 +413,8 @@ impl Pg {
                         format_type(a.atttypid, NULL),
                         NOT a.attnotnull,
                         pg_get_expr(d.adbin, d.adrelid),
-                        coalesce(a.attnum = ANY (i.indkey), false)
+                        coalesce(a.attnum = ANY (i.indkey), false),
+                        col_description(a.attrelid, a.attnum)
                    FROM pg_attribute a
                    LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
                    LEFT JOIN pg_index i ON i.indrelid = a.attrelid AND i.indisprimary
@@ -457,6 +458,7 @@ impl Pg {
                     nullable: r.get(3),
                     default: r.get(4),
                     primary_key: r.get(5),
+                    comment: r.get(6),
                 })
                 .collect(),
             indexes: indexes
@@ -474,6 +476,117 @@ impl Pg {
                 })
                 .collect(),
         })
+    }
+
+    /// Five catalog queries, pipelined on the one connection, however many
+    /// tables there are.
+    pub async fn schema(&self) -> Result<Schema> {
+        // User tables; partitions are shown through their parent.
+        const TABLES: &str = "c.relkind IN ('r', 'p') AND NOT c.relispartition
+                    AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+                    AND n.nspname NOT LIKE 'pg\\_toast%' AND n.nspname NOT LIKE 'pg\\_temp%'";
+        let columns_sql = format!(
+            "SELECT /* fabio */ n.nspname::text, c.relname::text, obj_description(c.oid, 'pg_class'),
+                        a.attname::text, format_type(a.atttypid, a.atttypmod), format_type(a.atttypid, NULL),
+                        NOT a.attnotnull, pg_get_expr(d.adbin, d.adrelid),
+                        coalesce(a.attnum = ANY (i.indkey), false), col_description(c.oid, a.attnum)
+                   FROM pg_class c
+                   JOIN pg_namespace n ON n.oid = c.relnamespace
+                   JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+                   LEFT JOIN pg_attrdef d ON d.adrelid = c.oid AND d.adnum = a.attnum
+                   LEFT JOIN pg_index i ON i.indrelid = c.oid AND i.indisprimary
+                  WHERE {TABLES}
+                  ORDER BY 1, 2, a.attnum"
+        );
+        let indexes_sql = format!(
+            "SELECT /* fabio */ n.nspname::text, c.relname::text,
+                        ic.relname::text, i.indisunique, i.indisprimary,
+                        array(SELECT pg_get_indexdef(i.indexrelid, k, true)
+                                FROM generate_series(1, i.indnkeyatts) k ORDER BY k)
+                   FROM pg_index i
+                   JOIN pg_class ic ON ic.oid = i.indexrelid
+                   JOIN pg_class c ON c.oid = i.indrelid
+                   JOIN pg_namespace n ON n.oid = c.relnamespace
+                  WHERE {TABLES}
+                  ORDER BY 1, 2, i.indisprimary DESC, 3"
+        );
+        let foreign_keys_sql = format!(
+            "SELECT /* fabio */ n.nspname::text, c.relname::text, con.conname::text,
+                        array(SELECT a.attname::text FROM unnest(con.conkey) WITH ORDINALITY k(n, o)
+                                JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = k.n
+                               ORDER BY k.o),
+                        rn.nspname::text, rc.relname::text,
+                        array(SELECT a.attname::text FROM unnest(con.confkey) WITH ORDINALITY k(n, o)
+                                JOIN pg_attribute a ON a.attrelid = con.confrelid AND a.attnum = k.n
+                               ORDER BY k.o)
+                   FROM pg_constraint con
+                   JOIN pg_class c ON c.oid = con.conrelid
+                   JOIN pg_namespace n ON n.oid = c.relnamespace
+                   JOIN pg_class rc ON rc.oid = con.confrelid
+                   JOIN pg_namespace rn ON rn.oid = rc.relnamespace
+                  WHERE con.contype = 'f' AND {TABLES}
+                  ORDER BY 1, 2, 3"
+        );
+        let (database, columns, indexes, foreign_keys, enums) = tokio::try_join!(
+            self.client.query_one("SELECT /* fabio */ current_database()::text", &[]),
+            self.client.query(&columns_sql, &[]),
+            self.client.query(&indexes_sql, &[]),
+            self.client.query(&foreign_keys_sql, &[]),
+            self.client.query(
+                "SELECT /* fabio */ n.nspname::text, t.typname::text,
+                        array_agg(e.enumlabel::text ORDER BY e.enumsortorder)
+                   FROM pg_type t
+                   JOIN pg_namespace n ON n.oid = t.typnamespace
+                   JOIN pg_enum e ON e.enumtypid = t.oid
+                  GROUP BY 1, 2
+                  ORDER BY 1, 2",
+                &[],
+            ),
+        )?;
+
+        let mut tables: Vec<SchemaTable> = Vec::new();
+        let mut at = std::collections::HashMap::new();
+        for r in &columns {
+            let key: (String, String) = (r.get(0), r.get(1));
+            let i = *at.entry(key.clone()).or_insert_with(|| {
+                tables.push(SchemaTable {
+                    schema: key.0,
+                    name: key.1,
+                    comment: r.get(2),
+                    info: TableInfo { columns: vec![], indexes: vec![], foreign_keys: vec![] },
+                });
+                tables.len() - 1
+            });
+            tables[i].info.columns.push(Column {
+                name: r.get(3),
+                data_type: r.get(4),
+                base_type: r.get(5),
+                nullable: r.get(6),
+                default: r.get(7),
+                primary_key: r.get(8),
+                comment: r.get(9),
+            });
+        }
+        let table = |r: &tokio_postgres::Row| at.get(&(r.get::<_, String>(0), r.get::<_, String>(1))).copied();
+        for r in &indexes {
+            if let Some(i) = table(r) {
+                let index = Index { name: r.get(2), unique: r.get(3), primary: r.get(4), columns: r.get(5) };
+                tables[i].info.indexes.push(index);
+            }
+        }
+        for r in &foreign_keys {
+            if let Some(i) = table(r) {
+                tables[i].info.foreign_keys.push(ForeignKey {
+                    name: Some(r.get(2)),
+                    columns: r.get(3),
+                    ref_schema: r.get(4),
+                    ref_table: r.get(5),
+                    ref_columns: r.get(6),
+                });
+            }
+        }
+        let enums = enums.iter().map(|r| EnumType { schema: r.get(0), name: r.get(1), values: r.get(2) }).collect();
+        Ok(Schema { engine: Engine::Postgres, database: database.get(0), tables, enums })
     }
 
     pub async fn count(&self, relation: &RelationRef, filters: &[Filter], timeout: Duration) -> Result<Count> {

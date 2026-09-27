@@ -29,6 +29,7 @@ type Tab =
   | { id: string; connectionId: string; kind: "table"; relation: RelationRef }
   | { id: string; connectionId: string; kind: "query"; title: string; sql: string; autorun?: Autorun }
   | { id: string; connectionId: string; kind: "insights" }
+  | { id: string; connectionId: string; kind: "diagram" }
   | { id: string; connectionId: string; kind: "agent" };
 
 type Autorun = "run" | "explain" | "analyze";
@@ -40,6 +41,7 @@ const AGENT_RECENT_MS = 10 * 60_000;
 const CommandPalette = lazyComponent(() => import("./CommandPalette").then((m) => m.CommandPalette));
 const ConnectionForm = lazyComponent(() => import("./ConnectionForm").then((m) => m.ConnectionForm));
 const DiscoverDialog = lazyComponent(() => import("./DiscoverDialog").then((m) => m.DiscoverDialog));
+const DiagramView = lazyComponent(() => import("./DiagramView").then((m) => m.DiagramView));
 const InsightsView = lazyComponent(() => import("./InsightsView").then((m) => m.InsightsView));
 const QueryTab = lazyComponent(() => import("./QueryTab").then((m) => m.QueryTab));
 const TableView = lazyComponent(() => import("./TableView").then((m) => m.TableView));
@@ -203,6 +205,15 @@ export default function App() {
     focusTab(tab);
   }
 
+  function openDiagram() {
+    if (!activeId) return;
+    const existing = tabs.find((t) => t.connectionId === activeId && t.kind === "diagram");
+    if (existing) return focusTab(existing);
+    const tab: Tab = { id: `t${nextTab++}`, connectionId: activeId, kind: "diagram" };
+    setTabs((all) => [...all, tab]);
+    focusTab(tab);
+  }
+
   async function openAgent(connectionId: string) {
     const conn = connections.find((c) => c.id === baseId(connectionId));
     if (!conn) return;
@@ -266,6 +277,7 @@ export default function App() {
       palette: () => setPalette(true),
       switcher: () => setSwitcher(true),
       databases: () => pickDatabase(),
+      diagram: () => openDiagram(),
       "row-pane": () => document.dispatchEvent(new CustomEvent("fabio-row-pane")),
       theme: () => setTheme(nextTheme),
     };
@@ -302,6 +314,7 @@ export default function App() {
       else if (key === "w" && current) closeTab(current);
       else if (key === "l" && e.shiftKey) setTheme(nextTheme);
       else if (key === "k" && e.shiftKey) setSwitcher((s) => !s);
+      else if (key === "d" && e.shiftKey) openDiagram();
       else if (key === "d") pickDatabase();
       else if (key === "k") setPalette((p) => !p);
       else return;
@@ -342,6 +355,7 @@ export default function App() {
     ...(active
       ? [
           { id: "query", label: "New query", hint: active.name, shortcut: "⌘T", run: () => newQuery() },
+          { id: "diagram", label: "Diagram", hint: active.name, run: openDiagram },
           ...(active.target.engine === "postgres" ? [{ id: "insights", label: "Insights", hint: active.name, run: openInsights }] : []),
           { id: "agent", label: "Agent activity", hint: active.name, run: () => openAgent(active.id) },
           { id: "edit", label: `Edit connection “${active.name}”`, run: () => setEditing(active) },
@@ -455,6 +469,9 @@ export default function App() {
                   Agent
                 </button>
               )}
+              <button className="ghost" onClick={openDiagram} title="Tables and their references (⇧⌘D)">
+                Diagram
+              </button>
               {active.target.engine === "postgres" && (
                 <button className="ghost" onClick={openInsights} title="What the server is doing, and where the time went">
                   Insights
@@ -493,7 +510,15 @@ export default function App() {
               <div key={t.id} className={`tab ${t.id === current ? "active" : ""}`} onClick={() => focusTab(t)} onAuxClick={() => closeTab(t.id)}>
                 <span className={`tab-kind ${t.kind}`}>{t.kind === "query" ? "SQL" : ""}</span>
                 <span className="ellipsis">
-                  {t.kind === "query" ? t.title : t.kind === "insights" ? "Insights" : t.kind === "agent" ? "Agent" : t.relation.name}
+                  {t.kind === "query"
+                    ? t.title
+                    : t.kind === "insights"
+                      ? "Insights"
+                      : t.kind === "agent"
+                        ? "Agent"
+                        : t.kind === "diagram"
+                          ? "Diagram"
+                          : t.relation.name}
                 </span>
                 <button
                   className="ghost tab-close"
@@ -528,6 +553,13 @@ export default function App() {
             return (
               <div key={t.id} className="tab-page" style={{ display: visible ? "flex" : "none" }}>
                 <InsightsView connectionId={t.connectionId} visible={visible} onOpenQuery={(sql) => newQuery(t.connectionId, sql)} />
+              </div>
+            );
+          }
+          if (t.kind === "diagram") {
+            return (
+              <div key={t.id} className="tab-page" style={{ display: visible ? "flex" : "none" }}>
+                <DiagramView connectionId={t.connectionId} visible={visible} onOpen={openTable} />
               </div>
             );
           }

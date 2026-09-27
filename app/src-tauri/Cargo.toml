@@ -22,3 +22,8 @@ tauri-plugin-dialog = "2.7.3"
 tokio = { version = "1.53.1", features = ["sync"] }
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 tauri-plugin-window-state = "2"
+
+# Bookmarks find a linked DBML file after its folder is moved or renamed.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSData", "NSError", "NSString", "NSURL"] }

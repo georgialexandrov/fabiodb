@@ -71,6 +71,7 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
                     &item("switcher", "Switch Connection…", Some("CmdOrCtrl+Shift+K"))?,
                     &item("databases", "Switch Database…", Some("CmdOrCtrl+D"))?,
                     &PredefinedMenuItem::separator(app)?,
+                    &item("diagram", "Diagram", Some("CmdOrCtrl+Shift+D"))?,
                     &item("row-pane", "Row Details", Some("CmdOrCtrl+I"))?,
                     &item("theme", "Next Theme (System, Light, Dark)", Some("CmdOrCtrl+Shift+L"))?,
                     &PredefinedMenuItem::separator(app)?,

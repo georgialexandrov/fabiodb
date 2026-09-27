@@ -1,14 +1,15 @@
+mod bookmark;
 mod menu;
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use fabiodb_core::{
-    AuditEntry, AuditLog, Changes, CompletionTable, Count, Db, Discovery, ExportFormat, Filter, Insights,
-    NewAuditEntry, Page, PageRequest, PgTarget, Plan, QueryResult, Relation, RelationRef, ResultColumn, Rows,
-    SavedConnection, Snippet, Snippets, Sort, Source, Store, TableInfo, Target, format_rows,
+    AuditEntry, AuditLog, Changes, CompletionTable, Count, Db, Discovery, ExportFormat, Filter, Insights, Layout, Link,
+    Links, NewAuditEntry, Page, PageRequest, PgTarget, Plan, QueryResult, Relation, RelationRef, ResultColumn, Rows,
+    SavedConnection, Schema, Snippet, Snippets, Sort, Source, Store, TableInfo, Target, format_rows, layout_path,
 };
 use serde::Serialize;
 use tauri::{Manager, State};
@@ -21,6 +22,10 @@ struct App {
     store: Store,
     snippets: Snippets,
     audit: AuditLog,
+    /// Where each workspace's DBML file was exported to.
+    links: Links,
+    /// Layouts of workspaces without a DBML file.
+    layouts: PathBuf,
     /// One read-only connection per saved connection, for browsing.
     open: Mutex<HashMap<String, Arc<Db>>>,
     /// One connection per query tab, so tabs have their own session and write mode.
@@ -429,6 +434,103 @@ async fn insights(app: State<'_, App>, id: String) -> Res<Insights> {
     app.browsing(&id, |db| async move { db.insights().await }).await
 }
 
+/// The live schema, where its tables sit, and the DBML file it's linked to.
+#[derive(Serialize)]
+struct Diagram {
+    schema: Schema,
+    layout: Layout,
+    dbml: Option<PathBuf>,
+    /// Linked, but the file is gone.
+    missing: bool,
+    /// The file no longer says what the database has.
+    stale: bool,
+}
+
+impl App {
+    /// The linked DBML file, found by bookmark if it moved; `(path, missing)`.
+    fn linked_dbml(&self, id: &str) -> Res<(Option<PathBuf>, bool)> {
+        let Some(link) = self.links.get(id).map_err(err)? else { return Ok((None, false)) };
+        let found = link
+            .bookmark
+            .as_deref()
+            .and_then(bookmark::resolve)
+            .or_else(|| link.dbml.exists().then(|| link.dbml.clone()));
+        match found {
+            Some(path) => {
+                if path != link.dbml {
+                    self.links.set(id, Link { dbml: path.clone(), ..link }).map_err(err)?;
+                }
+                Ok((Some(path), false))
+            }
+            None => Ok((Some(link.dbml), true)),
+        }
+    }
+
+    /// Next to the DBML file when there is one; otherwise in the app's folder.
+    fn layout_file(&self, id: &str, dbml: Option<&Path>) -> PathBuf {
+        match dbml {
+            Some(dbml) => layout_path(dbml),
+            None => {
+                let safe: String =
+                    id.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '_' }).collect();
+                self.layouts.join(format!("{safe}.json"))
+            }
+        }
+    }
+
+    /// The DBML text for this workspace, naming where it came from (no password).
+    fn dbml_text(&self, id: &str, schema: &Schema) -> Res<String> {
+        let (connection_id, database) = id.split_once('#').map_or((id, None), |(c, d)| (c, Some(d)));
+        let source = match self.store.get(connection_id).map_err(err)?.target {
+            Target::Postgres(pg) => format!("postgres://{}:{}/{}", pg.host, pg.port, database.unwrap_or(&pg.database)),
+            Target::Sqlite { path } => path.display().to_string(),
+        };
+        Ok(fabiodb_core::dbml(schema, Some(&source)))
+    }
+}
+
+#[tauri::command]
+async fn diagram(app: State<'_, App>, id: String) -> Res<Diagram> {
+    let schema = app.browsing(&id, |db| async move { db.schema().await }).await?;
+    let (dbml, missing) = app.linked_dbml(&id)?;
+    let here = dbml.as_deref().filter(|_| !missing);
+    let layout = Layout::read(&app.layout_file(&id, here)).map_err(err)?;
+    let stale = match here {
+        Some(path) => {
+            std::fs::read_to_string(path).is_ok_and(|text| text != app.dbml_text(&id, &schema).unwrap_or_default())
+        }
+        None => false,
+    };
+    Ok(Diagram { schema, layout, dbml, missing, stale })
+}
+
+#[tauri::command]
+fn save_layout(app: State<App>, id: String, layout: Layout) -> Res<()> {
+    let (dbml, missing) = app.linked_dbml(&id)?;
+    layout.write(&app.layout_file(&id, dbml.as_deref().filter(|_| !missing))).map_err(err)
+}
+
+/// Writes the schema as DBML to `path` and links the workspace to it. The
+/// layout moves along, unless one already sits next to the file.
+#[tauri::command]
+async fn export_dbml(app: State<'_, App>, id: String, path: PathBuf) -> Res<()> {
+    let schema = app.browsing(&id, |db| async move { db.schema().await }).await?;
+    std::fs::write(&path, app.dbml_text(&id, &schema)?).map_err(err)?;
+    let (old, missing) = app.linked_dbml(&id)?;
+    let target = layout_path(&path);
+    if !target.exists() {
+        let layout = Layout::read(&app.layout_file(&id, old.as_deref().filter(|_| !missing))).map_err(err)?;
+        layout.write(&target).map_err(err)?;
+    }
+    app.links.set(&id, Link { bookmark: bookmark::create(&path), dbml: path }).map_err(err)
+}
+
+/// Unlinks the DBML file; the diagram goes back to the app's own layout.
+#[tauri::command]
+fn forget_dbml(app: State<App>, id: String) -> Res<()> {
+    app.links.remove(&id).map_err(err)
+}
+
 #[tauri::command]
 fn list_snippets(app: State<App>) -> Res<Vec<Snippet>> {
     app.snippets.list().map_err(err)
@@ -521,6 +623,8 @@ pub fn run() {
                 store: Store::new(config.join("connections.json")),
                 snippets: Snippets::new(config.join("snippets.json")),
                 audit: AuditLog::open(data.join("audit.sqlite"))?,
+                links: Links::new(config.join("links.json")),
+                layouts: config.join("layouts"),
                 open: Mutex::default(),
                 sessions: Mutex::default(),
             });
@@ -555,6 +659,10 @@ pub fn run() {
             run_statement,
             explain,
             insights,
+            diagram,
+            save_layout,
+            export_dbml,
+            forget_dbml,
             history,
             list_snippets,
             save_snippet,

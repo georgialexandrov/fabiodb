@@ -41,6 +41,7 @@ export type Column = {
   nullable: boolean;
   default: string | null;
   primary_key: boolean;
+  comment?: string | null;
 };
 
 export type Index = { name: string; columns: string[]; unique: boolean; primary: boolean };
@@ -54,6 +55,21 @@ export type ForeignKey = {
 };
 
 export type TableInfo = { columns: Column[]; indexes: Index[]; foreign_keys: ForeignKey[] };
+
+export type SchemaTable = RelationRef & TableInfo & { comment?: string | null };
+
+export type Schema = {
+  engine: "postgres" | "sqlite";
+  database: string;
+  tables: SchemaTable[];
+  enums: { schema: string; name: string; values: string[] }[];
+};
+
+/** Table positions, keyed as DBML names them (`album`, `perf.big`). */
+export type Layout = { tables: Record<string, [number, number]> };
+
+/** The live schema, its layout, and the DBML file it's linked to (`missing`: linked, but gone). */
+export type Diagram = { schema: Schema; layout: Layout; dbml: string | null; missing: boolean; stale: boolean };
 
 export type Sort = { column: string; descending: boolean };
 
@@ -202,6 +218,10 @@ export const api = {
   runStatement: (id: string, sql: string) => invoke<QueryResult>("run_statement", { id, sql }),
   explain: (id: string, sql: string, analyze: boolean) => invoke<Plan>("explain", { id, sql, analyze }),
   insights: (id: string) => invoke<Insights>("insights", { id }),
+  diagram: (id: string) => invoke<Diagram>("diagram", { id }),
+  saveLayout: (id: string, layout: Layout) => invoke<void>("save_layout", { id, layout }),
+  exportDbml: (id: string, path: string) => invoke<void>("export_dbml", { id, path }),
+  forgetDbml: (id: string) => invoke<void>("forget_dbml", { id }),
   listSnippets: () => invoke<Snippet[]>("list_snippets"),
   saveSnippet: (snippet: Snippet) => invoke<Snippet>("save_snippet", { snippet }),
   deleteSnippet: (id: string) => invoke<void>("delete_snippet", { id }),

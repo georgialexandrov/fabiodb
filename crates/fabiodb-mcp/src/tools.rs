@@ -18,6 +18,11 @@ pub fn list() -> Value {
             "inputSchema": {"type": "object", "properties": {}},
         },
         {
+            "name": "schema",
+            "description": "The whole schema as DBML in one call: every table with its columns (type, not null, default, comment), primary keys, indexes, foreign keys as Ref lines, and enums. The quickest way to understand a database; views and functions aren't included.",
+            "inputSchema": {"type": "object", "properties": {"connection": connection}, "required": ["connection"]},
+        },
+        {
             "name": "list_tables",
             "description": "Tables and views in a connection, with the planner's row estimate where there is one.",
             "inputSchema": {"type": "object", "properties": {"connection": connection}, "required": ["connection"]},
@@ -99,6 +104,7 @@ pub async fn call(agent: &Agent, tool: &str, args: &Value) -> Result<String, Str
             Ok(plan_text(&agent.explain(text("connection")?, text("sql")?, analyze).await.map_err(fail)?))
         }
         "insights" => to_json(&agent.insights(text("connection")?).await.map_err(fail)?),
+        "schema" => agent.schema_dbml(text("connection")?).await.map_err(fail),
         other => Err(format!("unknown tool: {other}")),
     }
 }
