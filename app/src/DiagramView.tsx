@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { api, type Diagram, type RelationRef, type SchemaTable } from "./api";
 import { HEADER, ROW, WIDTH, edgePath, layOut, tableHeight, tableKey, type Point } from "./diagramLayout";
@@ -6,7 +6,7 @@ import { HEADER, ROW, WIDTH, edgePath, layOut, tableHeight, tableKey, type Point
 type Props = { connectionId: string; visible: boolean; onOpen: (r: RelationRef) => void };
 
 const MARGIN = 40;
-const clampZoom = (z: number) => Math.min(2, Math.max(0.25, Math.round(z * 100) / 100));
+const clampZoom = (z: number) => Math.min(2, Math.max(0.2, z));
 const fileName = (path: string) => path.split("/").pop() ?? path;
 
 /** The tables and their references, from the live schema. Drag a table to move it; double-click opens it. */
@@ -17,10 +17,12 @@ export function DiagramView({ connectionId, visible, onOpen }: Props) {
   const [hover, setHover] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
-  const scroller = useRef<HTMLDivElement>(null);
+  const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
   // Read by drag, which memoized cards keep from their last render.
   const live = useRef({ positions, zoom });
   live.current = { positions, zoom };
+  // The point that stays under the pointer while zooming: canvas and screen coordinates.
+  const anchor = useRef<{ x: number; y: number; cx: number; cy: number } | null>(null);
 
   async function load() {
     try {
@@ -38,30 +40,98 @@ export function DiagramView({ connectionId, visible, onOpen }: Props) {
     if (visible) load();
   }, [connectionId, visible]);
 
-  // ⌘= ⌘- ⌘0, and pinch (ctrl + wheel), while on screen.
+  /** Zooms keeping the point under the pointer (or the middle of the view) where it is. */
+  function zoomTo(next: number, clientX?: number, clientY?: number) {
+    const z = live.current.zoom;
+    const target = clampZoom(next);
+    if (!scroller || target === z) return;
+    const r = scroller.getBoundingClientRect();
+    const cx = (clientX ?? r.left + r.width / 2) - r.left;
+    const cy = (clientY ?? r.top + r.height / 2) - r.top;
+    anchor.current = { x: (scroller.scrollLeft + cx) / z, y: (scroller.scrollTop + cy) / z, cx, cy };
+    live.current.zoom = target;
+    setZoom(target);
+  }
+  const zoomAt = useRef(zoomTo);
+  zoomAt.current = zoomTo;
+
+  // Scroll so the anchor stays put, before the frame is painted.
+  useLayoutEffect(() => {
+    const a = anchor.current;
+    if (!a || !scroller) return;
+    anchor.current = null;
+    scroller.scrollLeft = a.x * zoom - a.cx;
+    scroller.scrollTop = a.y * zoom - a.cy;
+  }, [zoom, scroller]);
+
+  // Pinch (WebKit gesture events; ctrl + wheel elsewhere), and ⌘= ⌘- ⌘0.
   useEffect(() => {
-    if (!visible) return;
-    const onKey = (e: KeyboardEvent) => {
+    if (!visible || !scroller) return;
+    type Gesture = UIEvent & { scale: number; clientX: number; clientY: number };
+    let startZoom = 1;
+    // WebKit may also send ctrl + wheel for the same pinch; count it once.
+    let pinching = false;
+    const gestureStart = (e: Event) => {
+      e.preventDefault();
+      pinching = true;
+      startZoom = live.current.zoom;
+    };
+    const gestureChange = (e: Event) => {
+      e.preventDefault();
+      const g = e as Gesture;
+      zoomAt.current(startZoom * g.scale, g.clientX, g.clientY);
+    };
+    const gestureEnd = (e: Event) => {
+      e.preventDefault();
+      pinching = false;
+    };
+    const wheel = (e: WheelEvent) => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      if (pinching) return;
+      zoomAt.current(live.current.zoom * Math.exp(-e.deltaY / 100), e.clientX, e.clientY);
+    };
+    const key = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey)) return;
-      if (e.key === "=" || e.key === "+") setZoom((z) => clampZoom(z * 1.2));
-      else if (e.key === "-") setZoom((z) => clampZoom(z / 1.2));
-      else if (e.key === "0") setZoom(1);
+      const z = live.current.zoom;
+      if (e.key === "=" || e.key === "+") zoomAt.current(z * 1.25);
+      else if (e.key === "-") zoomAt.current(z / 1.25);
+      else if (e.key === "0") zoomAt.current(1);
       else return;
       e.preventDefault();
     };
-    const el = scroller.current;
-    const onWheel = (e: WheelEvent) => {
-      if (!e.ctrlKey) return;
-      e.preventDefault();
-      setZoom((z) => clampZoom(z * Math.exp(-e.deltaY / 200)));
-    };
-    window.addEventListener("keydown", onKey);
-    el?.addEventListener("wheel", onWheel, { passive: false });
+    scroller.addEventListener("gesturestart", gestureStart);
+    scroller.addEventListener("gesturechange", gestureChange);
+    scroller.addEventListener("gestureend", gestureEnd);
+    scroller.addEventListener("wheel", wheel, { passive: false });
+    window.addEventListener("keydown", key);
     return () => {
-      window.removeEventListener("keydown", onKey);
-      el?.removeEventListener("wheel", onWheel);
+      scroller.removeEventListener("gesturestart", gestureStart);
+      scroller.removeEventListener("gesturechange", gestureChange);
+      scroller.removeEventListener("gestureend", gestureEnd);
+      scroller.removeEventListener("wheel", wheel);
+      window.removeEventListener("keydown", key);
     };
-  }, [visible]);
+  }, [visible, scroller]);
+
+  /** Dragging the empty canvas moves the view, like a map. */
+  function pan(e: React.PointerEvent) {
+    if (e.button !== 0 || !scroller || (e.target as Element).closest(".diagram-table")) return;
+    e.preventDefault();
+    const [x0, y0, left, top] = [e.clientX, e.clientY, scroller.scrollLeft, scroller.scrollTop];
+    scroller.classList.add("panning");
+    const move = (m: PointerEvent) => {
+      scroller.scrollLeft = left - (m.clientX - x0);
+      scroller.scrollTop = top - (m.clientY - y0);
+    };
+    const up = () => {
+      scroller.classList.remove("panning");
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  }
 
   const schema = diagram?.schema;
   const tables = useMemo(
@@ -90,6 +160,7 @@ export function DiagramView({ connectionId, visible, onOpen }: Props) {
 
   function drag(key: string, e: React.PointerEvent) {
     if (e.button !== 0) return;
+    e.preventDefault();
     const { positions: before, zoom: z } = live.current;
     const start = before[key];
     const [x0, y0] = [e.clientX, e.clientY];
@@ -102,7 +173,9 @@ export function DiagramView({ connectionId, visible, onOpen }: Props) {
       moved = true;
       setPositions((p) => (latest = { ...p, [key]: [Math.max(0, Math.round(start[0] + dx)), Math.max(0, Math.round(start[1] + dy))] }));
     };
+    document.body.classList.add("dragging");
     const up = () => {
+      document.body.classList.remove("dragging");
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
       // Written once, when the table lands: one line changes in the file.
@@ -202,15 +275,15 @@ export function DiagramView({ connectionId, visible, onOpen }: Props) {
         <button className="ghost" onClick={exportDbml} title="Save the schema as DBML, with the layout next to it">
           Export DBML…
         </button>
-        <span className="muted zoom" title="⌘= ⌘- ⌘0, or pinch">
+        <button className="ghost zoom" title="Pinch or ⌘= ⌘- to zoom; click for 100% (⌘0)" onClick={() => zoomTo(1)}>
           {Math.round(zoom * 100)}%
-        </span>
+        </button>
       </div>
       {error && <p className="error">{error}</p>}
       {schema.tables.length === 0 ? (
         <p className="hint">No tables here.</p>
       ) : (
-        <div className="diagram-scroll" ref={scroller}>
+        <div className="diagram-scroll" ref={setScroller} onPointerDown={pan}>
           <div style={{ width: width * zoom, height: height * zoom }}>
             <div className="diagram-canvas" style={{ width, height, transform: `scale(${zoom})` }}>
               <svg className="diagram-edges" width={width} height={height}>
