@@ -407,3 +407,17 @@ button:disabled { opacity: 0.4; }
 .diagram-column { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 0 10px; font-family: var(--mono); font-size: 11px; }
 .diagram-column .pk { font-weight: 700; }
 .diagram-column > span:last-child { flex-shrink: 1; text-align: right; }
+
+/* Foreign keys: an arrow at the end of the cell; the row it points at on hover. */
+.grid-cell.linked { display: flex; align-items: center; gap: 4px; }
+.grid-cell.linked .cell-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.fk-link { flex: none; border: 0; background: none; padding: 0 3px; line-height: 1; font-size: 11px; color: var(--muted); opacity: 0; border-radius: 3px; }
+.grid-row:hover .fk-link, .grid-cell.selected .fk-link { opacity: 0.8; }
+.fk-link:hover { opacity: 1; color: var(--accent); background: var(--accent-soft); }
+.link-peek { position: fixed; z-index: 30; max-height: 320px; overflow: hidden; padding: 8px 0; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px #0003; font-size: 12px; pointer-events: none; }
+.link-peek header, .link-peek p { margin: 0; padding: 0 12px 6px; }
+.link-peek dl { margin: 0; }
+.link-peek dl div { display: flex; gap: 10px; padding: 1px 12px; }
+.link-peek dt { flex: 0 0 38%; color: var(--muted); }
+.link-peek dd { flex: 1; margin: 0; font-family: var(--mono); font-size: 11px; }
+.link-peek dd.null { color: var(--muted); font-style: italic; }

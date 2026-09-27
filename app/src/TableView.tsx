@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ColumnFilter, filterText } from "./ColumnFilter";
 import { chooseFile, ExportMenu } from "./ExportMenu";
-import { Grid, type GridEdit } from "./Grid";
+import { Grid, type GridEdit, type GridLink, type LinkedRow } from "./Grid";
 import { NewRow } from "./NewRow";
 import { Structure } from "./Structure";
 import {
@@ -26,12 +26,20 @@ const PAGE_SIZE = 100;
 // Bigger results scroll within a window of this many rows that moves on jumps.
 const WINDOW_ROWS = 500_000;
 
-type Props = { connectionId: string; relation: Relation; onOpen: (r: RelationRef) => void };
+/** Rows to show on arrival, from following a foreign key; a new `nonce` applies them again. */
+export type Follow = { filters: Filter[]; nonce: number };
+
+type Props = {
+  connectionId: string;
+  relation: Relation;
+  follow?: Follow;
+  onOpen: (r: RelationRef, filters?: Filter[]) => void;
+};
 
 /** Unsaved edits of one row, keyed by column name. */
 type PendingRow = { key: ColumnValue[]; changes: Record<string, { old: string | null; new: string | null }> };
 
-export function TableView({ connectionId, relation, onOpen }: Props) {
+export function TableView({ connectionId, relation, follow, onOpen }: Props) {
   const [tab, setTab] = useState<"data" | "structure">("data");
   const [info, setInfo] = useState<TableInfo | null>(null);
   const [sort, setSort] = useState<Sort | null>(null);
@@ -60,17 +68,29 @@ export function TableView({ connectionId, relation, onOpen }: Props) {
   const root = useRef<HTMLDivElement>(null);
   const generation = useRef(0);
   const requested = useRef(new Set<number>());
+  // Rows behind foreign-key arrows, fetched once per value.
+  const peeks = useRef(new Map<string, Promise<LinkedRow>>());
 
   useEffect(() => {
     setSort(null);
     setFiltering(null);
-    setFilters([]);
+    setFilters(follow?.filters ?? []);
+    peeks.current.clear();
     setInfo(null);
     setEdits({});
     setInserts([]);
     setDeletes({});
     api.describe(connectionId, relation).then(setInfo, (e) => setError(String(e)));
   }, [connectionId, relation.schema, relation.name]);
+
+  // Followed here again while already open: show the new rows.
+  const followed = useRef(follow?.nonce);
+  useEffect(() => {
+    if (!follow || follow.nonce === followed.current) return;
+    followed.current = follow.nonce;
+    setTab("data");
+    setFilters(follow.filters);
+  }, [follow?.nonce]);
 
   const loadPage = useCallback(
     async (n: number, gen: number) => {
@@ -94,6 +114,7 @@ export function TableView({ connectionId, relation, onOpen }: Props) {
   useEffect(() => {
     const gen = ++generation.current;
     requested.current = new Set();
+    peeks.current.clear();
     setPages({});
     setLastPage(null);
     setError(null);
@@ -157,6 +178,41 @@ export function TableView({ connectionId, relation, onOpen }: Props) {
     setEdits({});
     setInserts([]);
     setDeletes({});
+  };
+
+  // A foreign key's arrow sits in its first column; all its columns pick the row.
+  const gridColumns = meta?.columns ?? [];
+  const keyAt = (c: number) => info?.foreign_keys.find((fk) => fk.columns[0] === gridColumns[c]?.name);
+  const target = (i: number, c: number) => {
+    const fk = keyAt(c);
+    const r = rowAt(i);
+    if (!fk || !r) return null;
+    const values = fk.columns.map((name) => r[gridColumns.findIndex((col) => col.name === name)] ?? null);
+    if (values.some((v) => v === null)) return null;
+    const filters: Filter[] = fk.ref_columns.map((column, k) => ({ column, op: "eq", value: values[k] }));
+    return { fk, filters, relation: { schema: fk.ref_schema, name: fk.ref_table } };
+  };
+  const link: GridLink = {
+    has: (c) => !!keyAt(c),
+    onFollow(i, c) {
+      const t = target(i, c);
+      if (t) onOpen(t.relation, t.filters);
+    },
+    peek(i, c) {
+      const t = target(i, c);
+      if (!t) return Promise.resolve({ title: "", columns: [], row: null });
+      const title = `${t.relation.name} · ${t.filters.map((f) => `${f.column} = ${f.value}`).join(", ")}`;
+      const key = JSON.stringify([t.relation, t.filters]);
+      let found = peeks.current.get(key);
+      if (!found) {
+        found = api
+          .page(connectionId, { relation: t.relation, sort: null, filters: t.filters, offset: 0, limit: 1 })
+          .then((p) => ({ title, columns: p.columns.map((col) => col.name), row: p.rows[0] ?? null }));
+        found.catch(() => peeks.current.delete(key));
+        peeks.current.set(key, found);
+      }
+      return found;
+    },
   };
 
   const edit: GridEdit = {
@@ -362,6 +418,7 @@ export function TableView({ connectionId, relation, onOpen }: Props) {
             onNotice={setNotice}
             filtered={(c) => filters.some((f) => f.column === meta.columns[c].name)}
             onFilter={(c, anchor) => setFiltering({ column: meta.columns[c].name, anchor })}
+            link={link}
           />
         )
       ) : (

@@ -31,7 +31,18 @@ type Props = {
   /** Column filters: whether a column has one, and opening its popover (⌘F too). */
   filtered?: (col: number) => boolean;
   onFilter?: (col: number, anchor: DOMRect) => void;
+  /** Foreign keys: an arrow in their cells follows them; hovering it shows the row they point at. */
+  link?: GridLink;
 };
+
+export type GridLink = {
+  has: (col: number) => boolean;
+  onFollow: (row: number, col: number) => void;
+  peek: (row: number, col: number) => Promise<LinkedRow>;
+};
+
+/** The row a foreign key points at; `row` is null when there's no such row. */
+export type LinkedRow = { title: string; columns: string[]; row: (string | null)[] | null };
 
 type Cell = { row: number; col: number };
 
@@ -59,7 +70,7 @@ export type GridEdit = {
 /** Virtualized, random-access grid. Only on-screen rows are rendered. */
 export function Grid(props: Props) {
   const { columns, rowCount, row, sample, onRange, sort, onSort, scrollTo, rowOffset = 0, edit, table, onNotice } = props;
-  const { filtered, onFilter } = props;
+  const { filtered, onFilter, link } = props;
   const headerCells = useRef<(HTMLDivElement | null)[]>([]);
   const scroller = useRef<HTMLDivElement>(null);
   // `selected` is the active cell; with `anchor` it spans a rectangle (shift-click, shift-arrows).
@@ -85,6 +96,28 @@ export function Grid(props: Props) {
     });
   const [editing, setEditing] = useState<{ row: number; col: number; draft: string } | null>(null);
   const [detail, setDetail] = useState<{ column: ResultColumn; value: string | null } | null>(null);
+  // The row behind a foreign-key arrow, shown while the pointer rests on it.
+  const [peek, setPeek] = useState<{ at: DOMRect; linked: LinkedRow | null } | null>(null);
+  const peekTimer = useRef<number | undefined>(undefined);
+  const peekFor = useRef(0);
+
+  function startPeek(target: HTMLElement, row: number, col: number) {
+    window.clearTimeout(peekTimer.current);
+    const ticket = ++peekFor.current;
+    peekTimer.current = window.setTimeout(() => {
+      const at = target.getBoundingClientRect();
+      setPeek({ at, linked: null });
+      link?.peek(row, col).then(
+        (linked) => ticket === peekFor.current && setPeek({ at, linked }),
+        () => ticket === peekFor.current && setPeek(null),
+      );
+    }, 250);
+  }
+  function endPeek() {
+    window.clearTimeout(peekTimer.current);
+    peekFor.current++;
+    setPeek(null);
+  }
 
   const widths = useMemo(() => columnWidths(columns, sample), [columns, sample]);
   const totalWidth = widths.reduce((a, b) => a + b, 0) + gutterWidth(rowOffset + rowCount);
@@ -316,10 +349,11 @@ export function Grid(props: Props) {
                     );
                   }
                   const edited = edit?.pending(item.index, c) !== undefined;
+                  const linked = value !== null && !edited && !!link?.has(c);
                   return (
                     <div
                       key={c}
-                      className={`${cellClass(column, value, selected?.row === item.index && selected.col === c)}${edited ? " edited" : ""}${inRange(item.index, c) ? " in-range" : ""}`}
+                      className={`${cellClass(column, value, selected?.row === item.index && selected.col === c)}${edited ? " edited" : ""}${inRange(item.index, c) ? " in-range" : ""}${linked ? " linked" : ""}`}
                       style={{ width: widths[c] }}
                       onClick={(e) => select(at, e.shiftKey)}
                       onContextMenu={(e) => {
@@ -330,7 +364,30 @@ export function Grid(props: Props) {
                       onDoubleClick={() => (edit ? startEdit(at) : setDetail({ column, value }))}
                       title={edited ? `was ${r[c] ?? "NULL"}` : undefined}
                     >
-                      {value === null ? "NULL" : preview(value)}
+                      {linked ? (
+                        <>
+                          <span className="cell-text">{preview(value)}</span>
+                          <button
+                            className="fk-link"
+                            aria-label="Open the row this points to"
+                            onMouseDown={(e) => e.stopPropagation()}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              endPeek();
+                              link!.onFollow(item.index, c);
+                            }}
+                            onDoubleClick={(e) => e.stopPropagation()}
+                            onPointerEnter={(e) => startPeek(e.currentTarget, item.index, c)}
+                            onPointerLeave={endPeek}
+                          >
+                            →
+                          </button>
+                        </>
+                      ) : value === null ? (
+                        "NULL"
+                      ) : (
+                        preview(value)
+                      )}
                     </div>
                   );
                 })}
@@ -354,6 +411,7 @@ export function Grid(props: Props) {
         />
       )}
       {detail && <ValuePanel {...detail} onClose={() => setDetail(null)} />}
+      {peek && <LinkPeek at={peek.at} linked={peek.linked} />}
       {menu && (
         <div className="menu grid-menu" style={{ position: "fixed", left: menu.x, top: menu.y, right: "auto" }}>
           <button onClick={() => (setMenu(null), copy("tsv"))}>Copy</button>
@@ -517,6 +575,36 @@ function ValuePanel({ column, value, onClose }: { column: ResultColumn; value: s
         {value !== null && <span className="muted">{value.length.toLocaleString()} chars</span>}
       </footer>
     </aside>
+  );
+}
+
+/** The referenced row, beside the arrow: one field per line. */
+function LinkPeek({ at, linked }: { at: DOMRect; linked: LinkedRow | null }) {
+  const width = 320;
+  const left = Math.min(at.right + 8, window.innerWidth - width - 8);
+  const style = { left, top: Math.min(at.top - 6, window.innerHeight - 320), width };
+  return (
+    <div className="link-peek" style={style}>
+      {!linked ? (
+        <p className="muted">Looking…</p>
+      ) : (
+        <>
+          <header className="muted ellipsis">{linked.title}</header>
+          {linked.row === null ? (
+            <p className="muted">No such row.</p>
+          ) : (
+            <dl>
+              {linked.columns.map((name, i) => (
+                <div key={i}>
+                  <dt className="ellipsis">{name}</dt>
+                  <dd className={`ellipsis ${linked.row![i] === null ? "null" : ""}`}>{linked.row![i] === null ? "NULL" : preview(linked.row![i]!)}</dd>
+                </div>
+              ))}
+            </dl>
+          )}
+        </>
+      )}
+    </div>
   );
 }
 

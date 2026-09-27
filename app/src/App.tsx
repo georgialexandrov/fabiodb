@@ -17,16 +17,19 @@ import {
   type AuditEntry,
   type Discovery,
   type CompletionTable,
+  type Filter,
   type Relation,
   type RelationRef,
   type SavedConnection,
   type Snippet,
 } from "./api";
 
+import type { Follow } from "./TableView";
+
 const SQLITE_EXTENSIONS = /\.(db|sqlite|sqlite3|db3)$/i;
 
 type Tab =
-  | { id: string; connectionId: string; kind: "table"; relation: RelationRef }
+  | { id: string; connectionId: string; kind: "table"; relation: RelationRef; follow?: Follow }
   | { id: string; connectionId: string; kind: "query"; title: string; sql: string; autorun?: Autorun }
   | { id: string; connectionId: string; kind: "insights" }
   | { id: string; connectionId: string; kind: "diagram" }
@@ -179,11 +182,16 @@ export default function App() {
     setActiveTab((a) => ({ ...a, [tab.connectionId]: tab.id }));
   }
 
-  function openTable(relation: RelationRef) {
+  /** With `filters` (following a foreign key), the table opens showing just those rows. */
+  function openTable(relation: RelationRef, filters?: Filter[]) {
     if (!activeId) return;
+    const follow = filters && { filters, nonce: Date.now() };
     const existing = tabs.find((t) => t.connectionId === activeId && t.kind === "table" && sameRelation(t.relation, relation));
-    if (existing) return focusTab(existing);
-    const tab: Tab = { id: `t${nextTab++}`, connectionId: activeId, kind: "table", relation };
+    if (existing) {
+      if (follow) setTabs((all) => all.map((t) => (t.id === existing.id ? { ...t, follow } : t)));
+      return focusTab(existing);
+    }
+    const tab: Tab = { id: `t${nextTab++}`, connectionId: activeId, kind: "table", relation, follow };
     setTabs((all) => [...all, tab]);
     focusTab(tab);
   }
@@ -600,7 +608,7 @@ export default function App() {
           if (!relation) return null;
           return (
             <div key={t.id} className="tab-page" style={{ display: visible ? "flex" : "none" }}>
-              <TableView connectionId={t.connectionId} relation={relation} onOpen={openTable} />
+              <TableView connectionId={t.connectionId} relation={relation} follow={t.follow} onOpen={openTable} />
             </div>
           );
         })}
