@@ -227,5 +227,6 @@ A built-in chat UI with its own LLM keys (MCP covers it; revisit after Phase 4).
 
 The app is **Fabio**; crates and binaries are **`fabiodb`** (`fabiodb-core`,
 `fabiodb-mcp`, the app binary `fabiodb`) — `fabio` alone collides with the
-existing fabiolb load balancer. Renamed 2026-09-26. The bundle id stays
-`dev.fabio.app`, so saved connections and Keychain entries carry over.
+existing fabiolb load balancer. Renamed 2026-09-26. The bundle id is
+`dev.alexandrov.fabio` (was `dev.fabio.app`, a domain we don't own; changed
+2026-09-27 before the first public push).

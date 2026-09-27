@@ -2,7 +2,7 @@
 
 Read this first in a new session, then `CLAUDE.md` (rules), `PLAN.md` (phases,
 budgets, the v0.1 list) and `VOICE.md` (any text users see). Last updated
-2026-09-26, after commit `2faa611`.
+2026-09-27: licence, rename and bundle id settled.
 
 ## What Fabio is
 
@@ -56,7 +56,7 @@ cd app && pnpm tauri dev                          # run with hot reload
 ```
 
 Two Chinook connections are pre-saved in
-`~/Library/Application Support/dev.fabio.app/connections.json`; `chinook-pg` is
+`~/Library/Application Support/dev.alexandrov.fabio/connections.json`; `chinook-pg` is
 open to agents. The audit log is `audit.sqlite`, snippets `snippets.json`, in
 the same folder. `perf.fabio_demo` is a scratch table used to try cell editing.
 
@@ -129,9 +129,9 @@ automation stopped; these want a manual pass.
 ## Left
 
 - **Phase 4 exit run** with Claude Code on `perf.big`.
-- **Release (v0.1 item 13) — needs decisions:** licence (MIT or Apache-2.0),
-  GitHub remote (then CI's first run), Apple Developer ID for signing and
-  notarization, the `fabiodb` repo/binary rename.
+- **Release (v0.1 item 13):** decided: MIT OR Apache-2.0, crates/binaries
+  `fabiodb`, bundle id `dev.alexandrov.fabio`. Left: GitHub remote (then CI's
+  first run), Apple Developer ID for signing and notarization.
 - Agent role hardening: side-effect functions (`pg_terminate_backend`,
   `dblink`) are limited only by the role; recommend a non-superuser role.
 - Smaller: plan diff side by side, autocomplete noise, keyset paging, counts on

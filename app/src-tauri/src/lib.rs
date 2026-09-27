@@ -15,7 +15,7 @@ use tauri::{Manager, State};
 use tauri_plugin_window_state::StateFlags;
 
 static STARTED: OnceLock<Instant> = OnceLock::new();
-const KEYCHAIN_SERVICE: &str = "dev.fabio.app";
+const KEYCHAIN_SERVICE: &str = "dev.alexandrov.fabio";
 
 struct App {
     store: Store,

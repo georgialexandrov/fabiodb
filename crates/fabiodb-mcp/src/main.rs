@@ -20,7 +20,7 @@ use tokio::sync::Mutex;
 use tokio::task::JoinSet;
 
 /// Same service and account names as the app.
-const KEYCHAIN_SERVICE: &str = "dev.fabio.app";
+const KEYCHAIN_SERVICE: &str = "dev.alexandrov.fabio";
 const PROTOCOL_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
 
 const INSTRUCTIONS: &str = "Fabio gives read-only access to the databases its user marked for agents \
@@ -112,7 +112,7 @@ fn error(id: Value, code: i64, message: &str) -> Value {
     json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}})
 }
 
-/// The app's keychain entries: service `dev.fabio.app`, account = connection id.
+/// The app's keychain entries: service `dev.alexandrov.fabio`, account = connection id.
 struct OsKeychain;
 
 impl Keychain for OsKeychain {
@@ -139,13 +139,13 @@ impl Keychain for OsKeychain {
 }
 
 /// Where the app keeps connections.json (config) and audit.sqlite (data):
-/// Tauri's app_config_dir and app_data_dir for the `dev.fabio.app` identifier.
+/// Tauri's app_config_dir and app_data_dir for the `dev.alexandrov.fabio` identifier.
 fn dirs() -> (PathBuf, PathBuf) {
     if let Some(dir) = std::env::var_os("FABIO_DIR") {
         return (dir.clone().into(), dir.into());
     }
     let home = PathBuf::from(std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).unwrap_or_default());
-    let app = |base: PathBuf| base.join("dev.fabio.app");
+    let app = |base: PathBuf| base.join("dev.alexandrov.fabio");
     if cfg!(target_os = "macos") {
         let dir = app(home.join("Library/Application Support"));
         (dir.clone(), dir)
