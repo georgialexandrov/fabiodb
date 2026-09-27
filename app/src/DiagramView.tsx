@@ -171,7 +171,9 @@ export function DiagramView({ connectionId, visible, onOpen }: Props) {
       const dy = (m.clientY - y0) / z;
       if (!moved && Math.abs(dx) + Math.abs(dy) < 3) return;
       moved = true;
-      setPositions((p) => (latest = { ...p, [key]: [Math.max(0, Math.round(start[0] + dx)), Math.max(0, Math.round(start[1] + dy))] }));
+      // Only this table moves while dragging, so the next layout is known here, not in a state updater.
+      latest = { ...latest, [key]: [Math.max(0, Math.round(start[0] + dx)), Math.max(0, Math.round(start[1] + dy))] };
+      setPositions(latest);
     };
     document.body.classList.add("dragging");
     const up = () => {
