@@ -6,7 +6,7 @@ import type { Rows } from "./api";
  * column's kind is read from its values.
  */
 export type Kind = "number" | "time" | "key" | "text";
-export type Form = "line" | "bar" | "scatter" | "value" | "none";
+export type Form = "line" | "bar" | "pie" | "histogram" | "scatter" | "value" | "none";
 export type Spec = {
   form: Form;
   x: number | null;
@@ -95,6 +95,8 @@ export function pick(columns: string[], kinds: Kind[], rows: Rows): Spec {
       label: texts[0] ?? null,
       why: `Two numbers: ${name(nums[1])} against ${name(nums[0])}.`,
     };
+  if (nums.length === 1 && !categories.length && rows.length >= 10)
+    return { ...blank, form: "histogram", y: nums[0], why: `How ${name(nums[0])} is spread: rows per range of values.` };
   if (categories.length)
     return { ...blank, form: "bar", x: categories[0], y: nums[0], why: `One ${name(nums[0])} per ${name(categories[0])}, in the order the query returned them.` };
   return { ...blank, form: "none", why: "One number per row and nothing to put it against." };
@@ -103,7 +105,8 @@ export function pick(columns: string[], kinds: Kind[], rows: Rows): Spec {
 export function allowed(form: Form, kinds: Kind[]): boolean {
   const nums = indexes(kinds, "number").length;
   if (form === "scatter") return nums >= 2;
-  if (form === "line" || form === "bar") return nums >= 1 && kinds.length >= 2;
+  if (form === "histogram") return nums >= 1;
+  if (form === "line" || form === "bar" || form === "pie") return nums >= 1 && kinds.length >= 2;
   return true;
 }
 
@@ -112,6 +115,7 @@ export function reshape(spec: Spec, form: Form, kinds: Kind[]): Spec {
   const nums = indexes(kinds, "number");
   const why = "";
   if (form === "scatter") return { ...blank, form, x: nums[0], y: nums[1], label: indexes(kinds, "text")[0] ?? null, why };
+  if (form === "histogram") return { ...blank, form, y: spec.y !== null && kinds[spec.y] === "number" ? spec.y : nums[0], why };
   const other = kinds.findIndex((k) => k !== "number");
   const x = spec.x !== null && spec.x !== spec.y ? spec.x : other >= 0 ? other : nums[0];
   const y = spec.y !== null && spec.y !== x && kinds[spec.y] === "number" ? spec.y : (nums.find((i) => i !== x) ?? nums[0]);
@@ -129,4 +133,47 @@ export function niceTicks(max: number, min = 0, count = 5): number[] {
   const out: number[] = [];
   for (let i = Math.floor(lo / step); out.length === 0 || out[out.length - 1] < hi; i++) out.push(+(i * step).toPrecision(12));
   return out;
+}
+
+/** A pie reads at a glance up to this many slices; past it the smallest fold into "Other". */
+export const PIE_SLICES = 6;
+
+export type Slice = { label: string; value: number; other?: boolean };
+
+/**
+ * Slices largest first, the tail folded into one "Other" so there are at most
+ * PIE_SLICES. Null if a value is negative: parts of a whole can't be.
+ */
+export function pieSlices(rows: Rows, x: number, y: number): Slice[] | null {
+  const totals = new Map<string, number>();
+  for (const r of rows) {
+    if (r[y] === null) continue;
+    const v = +r[y]!;
+    if (v < 0) return null;
+    const k = r[x] ?? "NULL";
+    totals.set(k, (totals.get(k) ?? 0) + v);
+  }
+  const all = [...totals].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value);
+  if (all.length <= PIE_SLICES) return all;
+  const rest = all.slice(PIE_SLICES - 1);
+  return [...all.slice(0, PIE_SLICES - 1), { label: `Other (${rest.length})`, value: rest.reduce((a, b) => a + b.value, 0), other: true }];
+}
+
+export type Bin = { from: number; to: number; count: number };
+
+/** Equal ranges on round edges, about √n of them (5–40); each counts from ≤ v < to, the last includes its end. */
+export function histogram(values: number[]): Bin[] {
+  if (!values.length) return [];
+  let lo = Infinity, hi = -Infinity;
+  for (const v of values) (lo = Math.min(lo, v)), (hi = Math.max(hi, v));
+  if (lo === hi) return [{ from: lo, to: hi, count: values.length }];
+  const want = Math.min(40, Math.max(5, Math.round(Math.sqrt(values.length))));
+  const raw = (hi - lo) / want;
+  const p = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * p).find((s) => s >= raw)!;
+  const start = Math.floor(lo / step) * step;
+  const n = Math.max(1, Math.ceil((hi - start) / step - 1e-9));
+  const bins: Bin[] = Array.from({ length: n }, (_, i) => ({ from: +(start + i * step).toPrecision(12), to: +(start + (i + 1) * step).toPrecision(12), count: 0 }));
+  for (const v of values) bins[Math.min(n - 1, Math.floor((v - start) / step))].count++;
+  return bins;
 }

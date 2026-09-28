@@ -118,10 +118,15 @@ rolled back) with findings and plan tree, SQLite query plan, Insights.
   statement under the cursor — tables named before *or after* it — so `select | from album`
   offers album's columns only; `a.` narrows to that alias; after FROM/JOIN tables come with
   their schema added when it isn't `public`/`main`, and `billing.` lists that schema.
-  lang-sql still does keywords; its global schema completion is gone.
-- **Schema picker:** sidebar dropdown (only with 2+ schemas), kept per workspace in
+  lang-sql still does keywords; its global schema completion is gone. A column two
+  joined tables share comes qualified (`g.name`); table aliases rank with columns;
+  ORDER BY / GROUP BY / HAVING also offer the select list's `AS` names.
+- **Schema picker:** sidebar dropdown at the bottom (only with 2+ schemas), kept per workspace in
   localStorage `fabio.schemas`. Narrows the sidebar and the diagram; completion puts its
   tables first (queries still name the schema — `search_path` is untouched).
+- **Pie and histogram (charts):** pie by hand only (≤6 slices, the tail folded into
+  Other, refuses negatives; palette slots 4–6 validated with the dataviz validator in
+  both themes); histogram picked for one number column with 10+ rows (√n round bins).
 - **Diagram by schema:** `layOut` places each schema as its own block (default first),
   `schemaFrames` draws a labelled box around each schema's tables wherever they're dragged.
 - **DBML and diagram (v0.2):** `Db::schema()` (5 pipelined catalog queries),

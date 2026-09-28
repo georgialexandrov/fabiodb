@@ -1,11 +1,18 @@
 import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Rows } from "./api";
-import { allowed, columnKinds, niceTicks, pick, reshape, toTime, type Form, type Kind, type Spec } from "./chartSpec";
+import { allowed, columnKinds, histogram, niceTicks, pick, pieSlices, reshape, toTime, type Form, type Kind, type Spec } from "./chartSpec";
 
 /** More bars than this stop being readable; the rest stay in Results. */
 const BAR_CAP = 40;
 /** Colour-blind safe as a set in both themes; past three, lines fold into Results. */
 const SERIES = ["var(--series-1)", "var(--series-2)", "var(--series-3)"];
+/** Pie slices: the same palette, six slots, validated for adjacent slices in both themes. */
+const SLICES = [...SERIES, "var(--series-4)", "var(--series-5)", "var(--series-6)"];
+const FORMS: Form[] = ["line", "bar", "pie", "histogram", "scatter"];
+const NEEDS: Partial<Record<Form, string>> = {
+  scatter: "Needs two number columns",
+  histogram: "Needs a number column",
+};
 
 type Props = { columns: string[]; rows: Rows };
 /** Where the pointer is on screen, and what to say there. */
@@ -29,7 +36,7 @@ export default function ChartView({ columns, rows }: Props) {
   }, []);
   const [tip, setTip] = useState<Tip>(null);
 
-  const choosable = spec.form === "line" || spec.form === "bar" || spec.form === "scatter";
+  const choosable = spec.form === "line" || spec.form === "bar" || spec.form === "pie" || spec.form === "scatter";
   const column = (label: string, key: "x" | "y" | "series", fits: (k: Kind) => boolean, none = false) => (
     <label>
       {label}{" "}
@@ -45,12 +52,12 @@ export default function ChartView({ columns, rows }: Props) {
     <div className="chart">
       <div className="chart-head">
         <div className="segmented">
-          {(["line", "bar", "scatter"] as Form[]).map((f) => (
+          {FORMS.map((f) => (
             <button
               key={f}
               className={spec.form === f ? "on" : ""}
               disabled={!allowed(f, kinds)}
-              title={allowed(f, kinds) ? undefined : f === "scatter" ? "Needs two number columns" : "Needs a number and another column"}
+              title={allowed(f, kinds) ? undefined : (NEEDS[f] ?? "Needs a number and another column")}
               onClick={() => set(reshape(spec, f, kinds))}
             >
               {f[0].toUpperCase() + f.slice(1)}
@@ -59,6 +66,7 @@ export default function ChartView({ columns, rows }: Props) {
         </div>
         {choosable && column("x", "x", (k) => spec.form !== "scatter" || k === "number")}
         {choosable && column("y", "y", (k) => k === "number")}
+        {spec.form === "histogram" && column("of", "y", (k) => k === "number")}
         {spec.form === "line" && column("per", "series", (k) => k === "text" || k === "key", true)}
         <span className="muted ellipsis">{spec.why}</span>
       </div>
@@ -66,6 +74,8 @@ export default function ChartView({ columns, rows }: Props) {
         {width > 0 && spec.form === "line" && <LineChart {...props} />}
         {width > 0 && spec.form === "bar" && <BarChart {...props} />}
         {width > 0 && spec.form === "scatter" && <ScatterChart {...props} />}
+        {width > 0 && spec.form === "pie" && <PieChart {...props} />}
+        {width > 0 && spec.form === "histogram" && <HistogramChart {...props} />}
         {spec.form === "value" && (
           <div className="chart-value">
             <b>{fmt(rows[0][spec.y!])}</b>
@@ -293,6 +303,110 @@ function BarChart({ columns, rows, spec, width, setTip }: ChartProps) {
                   {fmt(v)}
                 </text>
               )}
+            </g>
+          );
+        })}
+      </svg>
+    </>
+  );
+}
+
+/** Part of a whole: a ring, largest slice from twelve o'clock, labelled beside it with share and value. */
+function PieChart({ columns, rows, spec, width, setTip }: ChartProps) {
+  const x = spec.x!, y = spec.y!;
+  const slices = useMemo(() => pieSlices(rows, x, y), [rows, x, y]);
+  const [hover, setHover] = useState<number | null>(null);
+  if (!slices) return <p className="hint">{columns[y]} has negative values; a pie shows parts of a whole. Try Bar.</p>;
+  const total = slices.reduce((a, b) => a + b.value, 0);
+  if (!(total > 0)) return <p className="hint">{columns[y]} adds up to nothing.</p>;
+  const R = Math.min(130, Math.max(60, (width - 40) / 4)), r = R * 0.6, pad = 6, C = R + pad;
+  const colour = (i: number) => (slices[i].other ? "var(--mark)" : SLICES[i]);
+  const pct = (v: number) => `${((v / total) * 100).toLocaleString(undefined, { maximumFractionDigits: 1 })}%`;
+  const show = (i: number, e: React.MouseEvent) => {
+    setHover(i);
+    const s = slices[i];
+    setTip({ x: e.clientX, y: e.clientY, body: <><div className="muted"><i style={{ background: colour(i) }} />{s.label}</div><b>{fmt(s.value)}</b> <span className="muted">{columns[y]} · {pct(s.value)}</span></> });
+  };
+  const leave = () => (setHover(null), setTip(null));
+  let angle = 0;
+  return (
+    <>
+      <div className="chart-title">
+        {columns[y]} by {columns[x]}
+      </div>
+      <div className="chart-pie">
+        <svg width={C * 2} height={C * 2}>
+          {slices.map((s, i) => {
+            const from = angle, to = (angle += (s.value / total) * Math.PI * 2);
+            const out = hover === i ? R + 4 : R;
+            return <path key={i} d={ring(C, out, r, from, to)} fill={colour(i)} className="slice" onMouseMove={(e) => show(i, e)} onMouseLeave={leave} />;
+          })}
+          <text x={C} y={C - 2} textAnchor="middle" className="pie-total">{fmt(total)}</text>
+          <text x={C} y={C + 16} textAnchor="middle">total</text>
+        </svg>
+        <div className="pie-legend">
+          {slices.map((s, i) => (
+            <div key={i} className={hover === i ? "on" : ""} onMouseMove={(e) => show(i, e)} onMouseLeave={leave}>
+              <i style={{ background: colour(i) }} />
+              <span className="ellipsis">{s.label}</span>
+              <b>{pct(s.value)}</b>
+              <span className="muted">{fmt(s.value)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </>
+  );
+}
+
+/** A ring segment between two angles (radians, clockwise from twelve o'clock). */
+function ring(c: number, R: number, r: number, a0: number, a1: number): string {
+  if (a1 - a0 >= Math.PI * 2 - 1e-6) a1 = a0 + Math.PI * 2 - 1e-4; // a whole ring still needs two ends
+  const pt = (rad: number, a: number) => `${c + rad * Math.sin(a)},${c - rad * Math.cos(a)}`;
+  const large = a1 - a0 > Math.PI ? 1 : 0;
+  return `M${pt(R, a0)}A${R},${R} 0 ${large} 1 ${pt(R, a1)}L${pt(r, a1)}A${r},${r} 0 ${large} 0 ${pt(r, a0)}Z`;
+}
+
+/** How one number column is spread: rows per equal range of values. */
+function HistogramChart({ columns, rows, spec, width, setTip }: ChartProps) {
+  const y = spec.y!;
+  const bins = useMemo(() => histogram(rows.flatMap((r) => (r[y] === null ? [] : [+r[y]!]))), [rows, y]);
+  const [hover, setHover] = useState<number | null>(null);
+  if (!bins.length) return <p className="hint">Every row has a NULL in {columns[y]}.</p>;
+  const H = 320, m = { l: 60, r: 20, t: 12, b: 38 };
+  const lo = bins[0].from, hi = bins[bins.length - 1].to;
+  const X = (v: number) => (hi === lo ? (width - m.l - m.r) / 2 + m.l : m.l + ((v - lo) / (hi - lo)) * (width - m.l - m.r));
+  const yt = niceTicks(Math.max(...bins.map((b) => b.count)));
+  const Y = (v: number) => H - m.b - (v / yt[yt.length - 1]) * (H - m.t - m.b);
+  const xt = hi === lo ? [lo] : niceTicks(hi, lo, 6).filter((t) => t >= lo && t <= hi);
+  const nulls = rows.length - bins.reduce((a, b) => a + b.count, 0);
+  return (
+    <>
+      <div className="chart-title">{columns[y]}: rows per range</div>
+      {nulls > 0 && <p className="hint">{nulls.toLocaleString()} NULL {nulls === 1 ? "row isn't" : "rows aren't"} counted.</p>}
+      <svg width={width} height={H}>
+        <YGrid ticks={yt} Y={Y} left={m.l} right={width - m.r} />
+        {xt.map((t) => (
+          <text key={t} x={X(t)} y={H - m.b + 18} textAnchor="middle">
+            {fmt(t)}
+          </text>
+        ))}
+        {bins.map((b, i) => {
+          const left = hi === lo ? X(lo) - 20 : X(b.from) + 1, w = hi === lo ? 40 : Math.max(1, X(b.to) - X(b.from) - 2);
+          const top = Y(b.count), h = Y(0) - top, rad = Math.min(4, w / 2, h);
+          // Square at the baseline, rounded at the top.
+          const d = `M${left},${Y(0)}v-${h - rad}a${rad},${rad} 0 0 1 ${rad},-${rad}h${w - 2 * rad}a${rad},${rad} 0 0 1 ${rad},${rad}v${h - rad}z`;
+          return (
+            <g
+              key={i}
+              onMouseMove={(e) => {
+                setHover(i);
+                setTip({ x: e.clientX, y: e.clientY, body: <><div className="muted">{fmt(b.from)} – {fmt(b.to)}</div><b>{b.count.toLocaleString()}</b> <span className="muted">{b.count === 1 ? "row" : "rows"}</span></> });
+              }}
+              onMouseLeave={() => (setHover(null), setTip(null))}
+            >
+              <rect x={left - 1} y={m.t} width={w + 2} height={H - m.t - m.b} fill="transparent" />
+              {b.count > 0 && <path d={d} fill={hover === i ? "var(--accent)" : "var(--mark)"} />}
             </g>
           );
         })}

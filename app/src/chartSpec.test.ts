@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { allowed, columnKinds, niceTicks, pick, toTime, type Kind } from "./chartSpec";
+import { allowed, columnKinds, histogram, niceTicks, pick, pieSlices, toTime, type Kind } from "./chartSpec";
 
 const kindsOf = (columns: string[], rows: (string | null)[][]) => columnKinds(columns, rows);
 const formOf = (columns: string[], rows: (string | null)[][]) => pick(columns, kindsOf(columns, rows), rows).form;
@@ -108,5 +108,40 @@ describe("toTime", () => {
   });
   it("reads a date as UTC midnight", () => {
     expect(toTime("2021-03-01")).toBe(Date.UTC(2021, 2, 1));
+  });
+});
+
+describe("pie", () => {
+  const rows = (pairs: [string, string][]) => pairs.map(([a, b]) => [a, b]);
+  it("orders slices largest first and folds the tail into Other", () => {
+    const s = pieSlices(rows([["a", "1"], ["b", "9"], ["c", "3"], ["d", "2"], ["e", "5"], ["f", "4"], ["g", "1"]]), 0, 1)!;
+    expect(s.map((x) => x.label)).toEqual(["b", "e", "f", "c", "d", "Other (2)"]);
+    expect(s[5]).toMatchObject({ value: 2, other: true });
+  });
+  it("adds up repeated labels and refuses negative parts", () => {
+    expect(pieSlices(rows([["a", "1"], ["a", "2"]]), 0, 1)).toEqual([{ label: "a", value: 3 }]);
+    expect(pieSlices(rows([["a", "1"], ["b", "-2"]]), 0, 1)).toBeNull();
+  });
+  it("is chosen by hand only", () => {
+    expect(allowed("pie", ["text", "number"])).toBe(true);
+    expect(pick(["genre", "n"], ["text", "number"], [["a", "1"], ["b", "2"]]).form).toBe("bar");
+  });
+});
+
+describe("histogram", () => {
+  it("is picked for one number column with enough rows", () => {
+    const rows = Array.from({ length: 50 }, (_, i) => [String(i)]);
+    expect(pick(["total"], ["number"], rows)).toMatchObject({ form: "histogram", y: 0 });
+  });
+  it("bins on round edges and counts every value once", () => {
+    const values = Array.from({ length: 100 }, (_, i) => i * 0.37);
+    const bins = histogram(values);
+    expect(bins.reduce((a, b) => a + b.count, 0)).toBe(100);
+    expect(bins[0].from).toBe(0);
+    expect(bins[bins.length - 1].to).toBeGreaterThanOrEqual(99 * 0.37);
+    expect(bins.length).toBeGreaterThanOrEqual(5);
+  });
+  it("keeps a single value in one bin", () => {
+    expect(histogram([3, 3, 3])).toEqual([{ from: 3, to: 3, count: 3 }]);
   });
 });

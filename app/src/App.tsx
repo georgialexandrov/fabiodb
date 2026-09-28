@@ -523,28 +523,6 @@ export default function App() {
           <div className="relations">
             <div className="relations-head">
               <input placeholder="Filter tables" value={search} onChange={(e) => setSearch(e.target.value)} spellCheck={false} />
-              {schemaNames.length > 1 && activeId && (
-                <select
-                  className="schema-pick"
-                  value={activeSchema ?? ""}
-                  title="Show one schema; queries suggest its tables first"
-                  onChange={(e) => {
-                    const id = activeId;
-                    const value = e.target.value;
-                    setPickedSchema((all) => {
-                      const { [id]: _, ...rest } = all;
-                      return value ? { ...rest, [id]: value } : rest;
-                    });
-                  }}
-                >
-                  <option value="">All schemas</option>
-                  {schemaNames.map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))}
-                </select>
-              )}
               <button className="ghost" onClick={() => newQuery()} title="New query (⌘T)">
                 SQL
               </button>
@@ -579,6 +557,31 @@ export default function App() {
                 ))}
               </div>
             ))}
+          </div>
+        )}
+
+        {active && schemaNames.length > 1 && activeId && (
+          <div className="schema-foot">
+            <select
+              className="schema-pick"
+              value={activeSchema ?? ""}
+              title="Show one schema; queries suggest its tables first"
+              onChange={(e) => {
+                const id = activeId;
+                const value = e.target.value;
+                setPickedSchema((all) => {
+                  const { [id]: _, ...rest } = all;
+                  return value ? { ...rest, [id]: value } : rest;
+                });
+              }}
+            >
+              <option value="">All schemas</option>
+              {schemaNames.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
           </div>
         )}
 

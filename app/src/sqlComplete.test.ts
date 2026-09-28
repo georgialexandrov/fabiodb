@@ -24,9 +24,28 @@ describe("columns", () => {
 
   it("cover every joined table, and say which", () => {
     const r = at("select | from album a join artist r on r.artist_id = a.artist_id")!;
-    expect(r.options.filter((o) => o.type === "column").map((o) => `${o.detail}.${o.label}`)).toEqual([
-      "a.album_id", "a.title", "a.artist_id", "r.artist_id", "r.name",
+    expect(r.options.filter((o) => o.type === "column").map((o) => o.displayLabel ?? `${o.label} (${o.detail})`)).toEqual([
+      "album_id (a)", "title (a)", "a.artist_id", "r.artist_id", "name (r)",
     ]);
+  });
+
+  it("qualify a column two tables share, so it runs", () => {
+    const r = at("select | from album a join artist r using (artist_id)")!;
+    expect(r.options.filter((o) => o.label === "artist_id").map((o) => o.apply)).toEqual(["a.artist_id", "r.artist_id"]);
+    expect(r.options.find((o) => o.label === "title")!.apply).toBe("title");
+  });
+
+  it("offer the tables' aliases as high as their columns", () => {
+    const r = at("select | from album a join artist r on true")!;
+    const alias = r.options.find((o) => o.label === "r")!;
+    expect(alias).toMatchObject({ type: "variable", detail: "alias of artist" });
+    expect(alias.boost).toBe(r.options.find((o) => o.label === "name")!.boost);
+  });
+
+  it("offer the select list's aliases in ORDER BY, GROUP BY and HAVING", () => {
+    const sql = "select g.name as genre, sum(il.title) as sold from album il join artist g on true group by 1 order by |";
+    expect(at(sql)!.options.slice(0, 2).map((o) => o.label)).toEqual(["genre", "sold"]);
+    expect(at("select title as t from album where |")!.options.some((o) => o.detail === "select alias")).toBe(false);
   });
 
   it("narrow to one table after its alias or name", () => {

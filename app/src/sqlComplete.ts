@@ -5,6 +5,8 @@ export type Engine = "postgres" | "sqlite";
 
 export type Suggestion = {
   label: string;
+  /** Shown instead of the label (matching still uses the label). */
+  displayLabel?: string;
   /** What gets inserted, when it differs from the label (quoting, a schema). */
   apply?: string;
   type: "column" | "table" | "namespace" | "variable";
@@ -123,10 +125,15 @@ export function complete(text: string, pos: number, tables: CompletionTable[], o
     label: s.ref.alias ?? s.table.name,
     apply: ident(s.ref.alias ?? s.table.name, opts.engine),
     type: "variable",
-    detail: s.ref.alias ? s.table.name : s.table.schema,
-    boost: -1,
+    detail: s.ref.alias ? `alias of ${s.table.name}` : s.table.schema,
+    boost: 1,
   }));
-  return result([...columnOptions(scope, opts, scope.length > 1), ...names]);
+  // ORDER BY, GROUP BY and HAVING may name what the select list called its columns.
+  const outputs: Suggestion[] =
+    keyword === "by" || keyword === "having"
+      ? selectAliases(tokens).map((a) => ({ label: a, apply: ident(a, opts.engine), type: "variable", detail: "select alias", boost: 2 }))
+      : [];
+  return result([...outputs, ...columnOptions(scope, opts, scope.length > 1), ...names]);
 }
 
 function tableOptions(tables: CompletionTable[], opts: CompleteOptions, withSchema: boolean): Suggestion[] {
@@ -140,16 +147,42 @@ function tableOptions(tables: CompletionTable[], opts: CompleteOptions, withSche
   }));
 }
 
+/** A column in more than one of the tables comes qualified (`g.name`), so it runs. */
 function columnOptions(scope: { ref: Ref; table: CompletionTable }[], opts: CompleteOptions, sayWhich: boolean): Suggestion[] {
-  return scope.flatMap(({ ref, table }) =>
-    table.columns.map((c): Suggestion => ({
-      label: c,
-      apply: ident(c, opts.engine),
-      type: "column",
-      detail: sayWhich ? (ref.alias ?? table.name) : undefined,
-      boost: 1,
-    })),
-  );
+  const seen = new Map<string, number>();
+  for (const { table } of scope) for (const c of table.columns) seen.set(c, (seen.get(c) ?? 0) + 1);
+  return scope.flatMap(({ ref, table }) => {
+    const owner = ref.alias ?? table.name;
+    return table.columns.map((c): Suggestion => {
+      const shared = (seen.get(c) ?? 0) > 1;
+      return {
+        label: c,
+        displayLabel: shared ? `${owner}.${c}` : undefined,
+        apply: shared ? `${ident(owner, opts.engine)}.${ident(c, opts.engine)}` : ident(c, opts.engine),
+        type: "column",
+        detail: sayWhich && !shared ? owner : undefined,
+        boost: 1,
+      };
+    });
+  });
+}
+
+/** `… AS name` in the outermost select list. */
+function selectAliases(tokens: Token[]): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let inList = false;
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i];
+    const word = t.kind === "word" ? t.value.toLowerCase() : "";
+    if (t.text === "(") depth++;
+    else if (t.text === ")") depth--;
+    else if (depth === 0 && word === "select") inList = true;
+    else if (depth === 0 && word === "from") {
+      if (inList) break;
+    } else if (inList && depth === 0 && word === "as" && isName(tokens[i + 1])) out.push(tokens[i + 1].value);
+  }
+  return out;
 }
 
 type Ref = { schema?: string; name: string; alias?: string };
