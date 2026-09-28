@@ -258,11 +258,11 @@ export function ConnectionForm({ initial, groups, onSaved, onDeleted, onClose }:
             {t.ssl.startsWith("verify") && (
               <div className="row">
                 <label className="grow">
-                  CA certificate
+                  Trusted certificates (PEM)
                   <input
                     spellCheck={false}
                     value={t.ca_cert ?? ""}
-                    placeholder="the system’s trusted CAs"
+                    placeholder={/\.rds\.amazonaws\.com\.?$/i.test(t.host) ? "the system’s CAs and Amazon RDS’s" : "the system’s trusted CAs"}
                     onChange={(e) => setTarget({ ca_cert: e.target.value || null })}
                   />
                 </label>

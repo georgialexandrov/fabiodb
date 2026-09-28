@@ -15,21 +15,26 @@ jobs:
       PGHOST: localhost
       PGPORT: "54329"
       PGUSER: fabio
+      FABIO_TEST_REQUIRE_TLS: "1"
     steps:
       - uses: actions/checkout@v4
 
       # A service container can't take server flags, and Insights needs
-      # pg_stat_statements preloaded.
+      # pg_stat_statements preloaded. TLS with the dev CA, as dev/pg.sh serves
+      # it; the key must belong to the container's postgres user.
       - name: Postgres 18
         run: |
-          docker run -d --name pg -p 54329:5432 \
+          dev/pg.sh certs
+          sudo chown 999:999 dev/.pgdata/ssl/server.key
+          docker run -d --name pg -p 54329:5432 -v "$PWD/dev/.pgdata/ssl:/ssl:ro" \
             -e POSTGRES_USER=fabio -e POSTGRES_HOST_AUTH_METHOD=trust \
-            postgres:18 -c shared_preload_libraries=pg_stat_statements
+            postgres:18 -c shared_preload_libraries=pg_stat_statements \
+            -c ssl=on -c ssl_cert_file=/ssl/server.crt -c ssl_key_file=/ssl/server.key
 
       - name: System packages (Tauri, keyring, psql)
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev \
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev \
             libayatana-appindicator3-dev librsvg2-dev libdbus-1-dev pkg-config postgresql-client
 
       - uses: dtolnay/rust-toolchain@stable

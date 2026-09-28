@@ -1,10 +1,18 @@
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
+use rustls::client::WebPkiServerVerifier;
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::crypto::{CryptoProvider, verify_tls12_signature, verify_tls13_signature};
+use rustls::pki_types::pem::PemObject;
+use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+use rustls::{CertificateError, DigitallySignedStruct, RootCertStore, SignatureScheme};
 use serde::{Deserialize, Serialize};
 use tokio_postgres::{Client, SimpleQueryMessage, types::ToSql};
+use tokio_postgres_rustls::MakeRustlsConnect;
 
 use crate::edit::{self, Changes, EditDialect};
 use crate::export::{self, ExportFormat, RowWriter};
@@ -43,8 +51,8 @@ pub struct PgTarget {
     /// Reach the server through this SSH host; `host`/`port` are then as seen from it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ssh: Option<crate::SshTunnel>,
-    /// PEM file of the CA that signed the server's certificate, for the verify
-    /// modes when it isn't a CA the system already trusts (libpq's sslrootcert).
+    /// PEM file (one CA or a bundle) trusted for the verify modes in addition to
+    /// the system's CAs (libpq's sslrootcert). RDS hosts don't need one.
     #[serde(default)]
     pub ca_cert: Option<PathBuf>,
 }
@@ -125,27 +133,140 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// libpq's semantics: prefer/require encrypt without checking; the verify
-/// modes check the chain (and, for verify-full, the host name).
-fn tls_connector(target: &PgTarget) -> Result<postgres_native_tls::MakeTlsConnector> {
-    let mut builder = native_tls::TlsConnector::builder();
-    match target.ssl {
-        SslMode::Disable | SslMode::Prefer | SslMode::Require => {
-            builder.danger_accept_invalid_certs(true);
-        }
-        SslMode::VerifyCa | SslMode::VerifyFull => {
-            if let Some(path) = &target.ca_cert {
-                let pem = std::fs::read(path).map_err(|e| Error::Invalid(format!("{}: {e}", path.display())))?;
-                let cert = native_tls::Certificate::from_pem(&pem)
-                    .map_err(|e| Error::Invalid(format!("{}: not a PEM certificate: {e}", path.display())))?;
-                builder.add_root_certificate(cert);
-            }
-            if target.ssl == SslMode::VerifyCa {
-                builder.danger_accept_invalid_hostnames(true);
-            }
+/// Amazon RDS signs its certificates with its own CAs, one per region, which no
+/// system trusts. Servers under `*.rds.amazonaws.com` get them without asking.
+/// Source: https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
+const RDS_BUNDLE: &[u8] = include_bytes!("../certs/rds-global-bundle.pem");
+
+fn is_rds(host: &str) -> bool {
+    host.trim_end_matches('.').to_ascii_lowercase().ends_with(".rds.amazonaws.com")
+}
+
+/// The CAs a verify mode accepts: the system's, RDS's for RDS hosts, and every
+/// certificate in `ca_cert` (a bundle, not just its first entry).
+fn trusted_roots(target: &PgTarget) -> Result<RootCertStore> {
+    static SYSTEM: OnceLock<Vec<CertificateDer<'static>>> = OnceLock::new();
+    let system = SYSTEM.get_or_init(|| rustls_native_certs::load_native_certs().certs);
+    let mut roots = RootCertStore::empty();
+    roots.add_parsable_certificates(system.iter().cloned());
+    if is_rds(&target.host) {
+        roots.add_parsable_certificates(CertificateDer::pem_slice_iter(RDS_BUNDLE).flatten());
+    }
+    if let Some(path) = &target.ca_cert {
+        let invalid = |why: String| Error::Invalid(format!("{}: {why}", path.display()));
+        let pem = std::fs::read(path).map_err(|e| invalid(e.to_string()))?;
+        let certs = CertificateDer::pem_slice_iter(&pem)
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| invalid(format!("not a PEM file: {e}")))?;
+        let (added, _) = roots.add_parsable_certificates(certs);
+        if added == 0 {
+            return Err(invalid("no certificates in it".into()));
         }
     }
-    Ok(postgres_native_tls::MakeTlsConnector::new(builder.build()?))
+    Ok(roots)
+}
+
+/// libpq's semantics: prefer/require encrypt without checking; the verify
+/// modes check the chain (and, for verify-full, the host name).
+fn tls_connector(target: &PgTarget) -> Result<MakeRustlsConnect> {
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let config = rustls::ClientConfig::builder_with_provider(provider.clone())
+        .with_safe_default_protocol_versions()?
+        .dangerous();
+    let verifier: Arc<dyn ServerCertVerifier> = match target.ssl {
+        SslMode::Disable | SslMode::Prefer | SslMode::Require => Arc::new(AnyCertificate(provider)),
+        SslMode::VerifyCa | SslMode::VerifyFull => {
+            let chain = WebPkiServerVerifier::builder_with_provider(Arc::new(trusted_roots(target)?), provider)
+                .build()
+                .map_err(|e| Error::Invalid(format!("no trusted certificates: {e}")))?;
+            if target.ssl == SslMode::VerifyCa { Arc::new(AnyName(chain)) } else { chain }
+        }
+    };
+    Ok(MakeRustlsConnect::new(config.with_custom_certificate_verifier(verifier).with_no_client_auth()))
+}
+
+/// prefer/require: any certificate, but the handshake is still signed by it.
+#[derive(Debug)]
+struct AnyCertificate(Arc<CryptoProvider>);
+
+impl ServerCertVerifier for AnyCertificate {
+    fn verify_server_cert(
+        &self,
+        _: &CertificateDer<'_>,
+        _: &[CertificateDer<'_>],
+        _: &ServerName<'_>,
+        _: &[u8],
+        _: UnixTime,
+    ) -> std::result::Result<ServerCertVerified, rustls::Error> {
+        Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
+        verify_tls12_signature(message, cert, dss, &self.0.signature_verification_algorithms)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
+        verify_tls13_signature(message, cert, dss, &self.0.signature_verification_algorithms)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.0.signature_verification_algorithms.supported_schemes()
+    }
+}
+
+/// verify-ca: the chain must lead to a trusted CA; the name may be anything.
+/// webpki checks the chain before the name, so a name error means the chain passed.
+#[derive(Debug)]
+struct AnyName(Arc<WebPkiServerVerifier>);
+
+impl ServerCertVerifier for AnyName {
+    fn verify_server_cert(
+        &self,
+        end_entity: &CertificateDer<'_>,
+        intermediates: &[CertificateDer<'_>],
+        server_name: &ServerName<'_>,
+        ocsp: &[u8],
+        now: UnixTime,
+    ) -> std::result::Result<ServerCertVerified, rustls::Error> {
+        match self.0.verify_server_cert(end_entity, intermediates, server_name, ocsp, now) {
+            Err(rustls::Error::InvalidCertificate(
+                CertificateError::NotValidForName | CertificateError::NotValidForNameContext { .. },
+            )) => Ok(ServerCertVerified::assertion()),
+            other => other,
+        }
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
+        self.0.verify_tls12_signature(message, cert, dss)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
+        self.0.verify_tls13_signature(message, cert, dss)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.0.supported_verify_schemes()
+    }
 }
 
 pub struct Pg {
@@ -153,7 +274,7 @@ pub struct Pg {
     /// Kept open as long as this connection lives.
     _tunnel: Option<std::sync::Arc<crate::tunnel::Tunnel>>,
     /// Kept for cancel requests, which open their own connection.
-    tls: postgres_native_tls::MakeTlsConnector,
+    tls: MakeRustlsConnect,
 }
 
 impl Pg {
@@ -723,4 +844,33 @@ pub(crate) fn result_columns(info: &TableInfo) -> Vec<ResultColumn> {
 
 fn ms(started: Instant) -> f64 {
     started.elapsed().as_secs_f64() * 1000.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn roots_for(host: &str) -> RootCertStore {
+        let mut t = PgTarget::from_url(&format!("postgres://me@{host}/app")).unwrap();
+        t.ca_cert = None;
+        trusted_roots(&t).unwrap()
+    }
+
+    fn names(roots: &RootCertStore) -> String {
+        roots.roots.iter().map(|r| String::from_utf8_lossy(r.subject.as_ref()).into_owned()).collect()
+    }
+
+    #[test]
+    fn rds_hosts_trust_amazons_rds_cas_in_every_region() {
+        let rds = names(&roots_for("work.c1abc2def3gh.eu-central-1.rds.amazonaws.com"));
+        assert!(rds.contains("Amazon RDS eu-central-1 Root CA"));
+        assert!(rds.contains("Amazon RDS us-east-1 Root CA"));
+        assert!(names(&roots_for("WORK.cluster-x.us-east-1.RDS.amazonaws.com.")).contains("Amazon RDS us-east-1"));
+    }
+
+    #[test]
+    fn other_hosts_dont() {
+        assert!(!names(&roots_for("db.example.com")).contains("Amazon RDS"));
+        assert!(!names(&roots_for("rds.amazonaws.com.evil.example")).contains("Amazon RDS"));
+    }
 }

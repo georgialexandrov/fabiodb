@@ -250,7 +250,7 @@ pub struct QueryResult {
 
 pub enum Canceller {
     /// Boxed: a cancel token plus TLS connector is ~240 bytes, the SQLite handle 8.
-    Postgres(Box<(tokio_postgres::CancelToken, postgres_native_tls::MakeTlsConnector)>),
+    Postgres(Box<(tokio_postgres::CancelToken, tokio_postgres_rustls::MakeRustlsConnect)>),
     Sqlite(std::sync::Arc<rusqlite::InterruptHandle>),
 }
 
@@ -444,7 +444,7 @@ pub enum Error {
     #[error("{0}")]
     Sqlite(#[from] rusqlite::Error),
     #[error("{0}")]
-    Tls(#[from] native_tls::Error),
+    Tls(#[from] rustls::Error),
     #[error("{0}")]
     Task(#[from] tokio::task::JoinError),
     #[error("{0}")]

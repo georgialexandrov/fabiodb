@@ -1,6 +1,6 @@
 //! SSL modes against the dev server, which offers TLS with a private CA
-//! (dev/pg.sh). Where the server has no TLS (CI's plain container), the
-//! connecting tests say so and pass without checking.
+//! (dev/pg.sh). Where the server has no TLS, the connecting tests say so and
+//! pass without checking — unless FABIO_TEST_REQUIRE_TLS is set, as in CI.
 
 mod common;
 
@@ -15,6 +15,8 @@ fn ca() -> PathBuf {
 
 async fn server_has_tls() -> bool {
     let on = postgres().await.query("show ssl").await.unwrap().rows[0][0].as_deref() == Some("on");
+    let required = std::env::var_os("FABIO_TEST_REQUIRE_TLS").is_some();
+    assert!(!required || (on && ca().exists()), "FABIO_TEST_REQUIRE_TLS: the server has no TLS or dev CA");
     if !on {
         eprintln!("server has ssl = off; TLS checks skipped");
     }
@@ -79,4 +81,32 @@ fn url_carries_verify_modes_and_the_ca_file() {
 
     let t = PgTarget::from_url("postgresql://me@db.example:6543/app?application_name=x&sslmode=verify-ca").unwrap();
     assert_eq!((t.ssl, t.port), (SslMode::VerifyCa, 6543));
+}
+
+/// A bundle holds many CAs, and the one that signed the server can be anywhere
+/// in it. Amazon's RDS bundle starts with sa-east-1; reading only the first
+/// certificate is how Fabio failed its first RDS connection.
+#[tokio::test]
+async fn verify_full_trusts_every_ca_in_a_bundle() {
+    if !server_has_tls().await {
+        return;
+    }
+    let rds = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/certs/rds-global-bundle.pem")).unwrap();
+    let mut bundle = rds;
+    bundle.extend(std::fs::read(ca()).unwrap());
+    let path = std::env::temp_dir().join(format!("fabio-bundle-{}.pem", std::process::id()));
+    std::fs::write(&path, bundle).unwrap();
+
+    let db = Db::open(&target("localhost", SslMode::VerifyFull, Some(path.clone()))).await.unwrap();
+    assert!(uses_tls(&db).await);
+    std::fs::remove_file(path).unwrap();
+}
+
+#[tokio::test]
+async fn a_ca_file_without_certificates_is_named() {
+    let path = std::env::temp_dir().join(format!("fabio-not-pem-{}.pem", std::process::id()));
+    std::fs::write(&path, "not a certificate").unwrap();
+    let err = Db::open(&target("localhost", SslMode::VerifyFull, Some(path.clone()))).await.err().unwrap();
+    assert!(err.to_string().contains(&path.display().to_string()), "{err}");
+    std::fs::remove_file(path).unwrap();
 }

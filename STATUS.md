@@ -19,7 +19,7 @@ Tauri 2 · Rust core · React 19 + TypeScript + Vite · CodeMirror 6 · `@tansta
 ```
 crates/fabiodb-core/      all database logic; the app and the MCP server share it
   src/lib.rs            Db (enum over engines), shared types, Error, Canceller
-  src/postgres.rs       tokio-postgres + native-tls (SSL modes, CA file); read-only by default
+  src/postgres.rs       tokio-postgres + rustls (SSL modes, CA bundle, RDS CAs built in); read-only by default
   src/sqlite.rs         rusqlite (bundled); opened read-only, reopened for writes
   src/tunnel.rs         SSH tunnels via the system ssh, shared per host
   src/sql.rs            page/count/select builder (identifiers only from describe)
@@ -106,7 +106,10 @@ rolled back) with findings and plan tree, SQLite query plan, Insights.
 - **Docker/folders:** "Docker folder…" finds Compose Postgres services (with
   .env/env_file interpolation, ports, image defaults) and SQLite files.
 - **Snippets:** ⌘S in a query tab, listed next to History, found with ⌘K.
-- **Connections:** SSL verify-ca / verify-full + CA file; SSH tunnel via system ssh.
+- **Connections:** SSL verify-ca / verify-full + a PEM file of trusted CAs (every
+  certificate in it, not just the first); `*.rds.amazonaws.com` trusts Amazon's RDS
+  bundle (`crates/fabiodb-core/certs/`) without one. rustls, no OpenSSL or native-tls.
+  SSH tunnel via system ssh.
 - **Resilience:** reconnect after sleep/network loss (browse retries silently,
   query tabs say so); tabs, query text, workspace and window restored on launch.
 - **Look and feel:** dark mode (System/Light/Dark, ⇧⌘L), native menu bar with
@@ -169,6 +172,10 @@ automation stopped; these want a manual pass.
   hide the reason in `source()` (now chained into the message).
 - tokio-postgres knows no `verify-*` sslmode or `sslrootcert`; Fabio strips and
   handles them itself.
+- **TLS broke on the first real server (RDS, 2026-09-28).** native-tls read only the
+  first certificate of a CA bundle (RDS's starts with sa-east-1), and RDS CAs aren't
+  in any system store. CI now serves TLS and `FABIO_TEST_REQUIRE_TLS` fails instead
+  of skipping the TLS tests.
 - Rust async closures can't promise `Send` futures yet; Tauri commands need
   `Fn(Arc<Db>) -> impl Future + Send` instead.
 - The page sees ⌘ keys before the native menu; handlers must `preventDefault`,

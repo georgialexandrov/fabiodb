@@ -8,6 +8,7 @@
 #   dev/pg.sh reset   stop and delete the cluster
 #   dev/pg.sh load    load Chinook + perf.big into a server that's already
 #                     running (CI: PGHOST/PGPORT/PGUSER, psql on PATH)
+#   dev/pg.sh certs   make the dev CA and server certificate only (CI mounts them)
 set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -62,7 +63,7 @@ SQL
 # TLS with a private CA, so verify-full can be tested: dev/.pgdata/ssl/ca.crt
 # signs a certificate for "localhost" only (not 127.0.0.1). Plain connections
 # keep working; the server offers TLS, it doesn't require it.
-ssl() {
+certs() {
   local dir="$PGDATA/ssl"
   if [ ! -f "$dir/server.crt" ]; then
     mkdir -p "$dir"
@@ -76,6 +77,11 @@ ssl() {
       -days 800 -extfile "$dir/server.ext" -out "$dir/server.crt" 2>/dev/null
     chmod 600 "$dir/server.key"
   fi
+}
+
+ssl() {
+  local dir="$PGDATA/ssl"
+  certs
   if ! grep -q "^ssl = on" "$PGDATA/postgresql.conf"; then
     printf "ssl = on\nssl_cert_file = '%s'\nssl_key_file = '%s'\n" "$dir/server.crt" "$dir/server.key" >> "$PGDATA/postgresql.conf"
     "$1/pg_ctl" -D "$PGDATA" reload >/dev/null
@@ -96,8 +102,9 @@ case "${1:-start}" in
     load "$BIN"
     ;;
   load)  load "" ;;
+  certs) certs ;;
   stop)  "$(brew_bin)/pg_ctl" -D "$PGDATA" -w stop ;;
   psql)  exec "$(brew_bin)/psql" -d chinook ;;
   reset) "$(brew_bin)/pg_ctl" -D "$PGDATA" -w stop 2>/dev/null || true; rm -rf "$PGDATA" ;;
-  *) echo "usage: $0 start|stop|psql|reset|load" >&2; exit 1 ;;
+  *) echo "usage: $0 start|stop|psql|reset|load|certs" >&2; exit 1 ;;
 esac

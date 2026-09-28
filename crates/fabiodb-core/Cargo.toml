@@ -7,14 +7,15 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 futures-util = "0.3.34"
 iana-time-zone = "0.1.65"
-native-tls = "0.2.18"
-postgres-native-tls = "0.5.3"
 rusqlite = { version = "0.40.2", features = ["bundled", "limits"] }
+rustls = { version = "0.23.45", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+rustls-native-certs = "0.8.4"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 thiserror = "2.0.21"
 tokio = { version = "1.53.1", features = ["io-util", "macros", "net", "process", "rt", "sync", "time"] }
 tokio-postgres = "0.7.18"
+tokio-postgres-rustls = "0.14.0"
 yaml-rust2 = "0.13"
 
 [dev-dependencies]

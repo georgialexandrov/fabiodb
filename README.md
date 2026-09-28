@@ -93,7 +93,8 @@ goes over them.
 ## Connections
 
 - **Postgres:** fill in the fields, or paste a `postgres://` URL. SSL modes
-  from `disable` to `verify-full`, with your own CA file. Remote servers default
+  from `disable` to `verify-full`, with your own CA file or bundle. Amazon RDS
+  hosts (`*.rds.amazonaws.com`) trust Amazon's RDS CAs out of the box. Remote servers default
   to `verify-full`; this machine (localhost, Docker) to `prefer`. SSH tunnels go
   through the system `ssh`, so your keys, agent and `~/.ssh/config` just work.
   Passwords are stored in the macOS Keychain, never in a file.
