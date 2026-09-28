@@ -114,6 +114,16 @@ rolled back) with findings and plan tree, SQLite query plan, Insights.
   query tabs say so); tabs, query text, workspace and window restored on launch.
 - **Look and feel:** dark mode (System/Light/Dark, ⇧⌘L), native menu bar with
   About box, window shown only once painted.
+- **Completion by context (v0.2):** `app/src/sqlComplete.ts` (pure, tested) reads the
+  statement under the cursor — tables named before *or after* it — so `select | from album`
+  offers album's columns only; `a.` narrows to that alias; after FROM/JOIN tables come with
+  their schema added when it isn't `public`/`main`, and `billing.` lists that schema.
+  lang-sql still does keywords; its global schema completion is gone.
+- **Schema picker:** sidebar dropdown (only with 2+ schemas), kept per workspace in
+  localStorage `fabio.schemas`. Narrows the sidebar and the diagram; completion puts its
+  tables first (queries still name the schema — `search_path` is untouched).
+- **Diagram by schema:** `layOut` places each schema as its own block (default first),
+  `schemaFrames` draws a labelled box around each schema's tables wherever they're dragged.
 - **DBML and diagram (v0.2):** `Db::schema()` (5 pipelined catalog queries),
   `dbml()` validated against the reference parser, MCP tool `schema`; Diagram
   tab (⇧⌘D) with drag, zoom, Arrange, Export DBML…; `links.json` + macOS
@@ -137,7 +147,8 @@ reload, save, audited).
 
 **Tests only, not yet clicked through:** column filters, row details pane, add
 and delete rows, grid ranges and copy formats, ⌘K, snippets, connection
-switcher and start page, ⌘D, Docker folder dialog, SSL/SSH form sections,
+switcher and start page, ⌘D, Docker folder dialog, context completion, schema
+picker, schema frames in the diagram, SSL/SSH form sections,
 menu bar (check each shortcut fires once), layout restore, reconnect in the
 app, export dialogs. The user was using the app during this work, so UI
 automation stopped; these want a manual pass.
@@ -150,7 +161,7 @@ automation stopped; these want a manual pass.
   first run), Apple Developer ID for signing and notarization.
 - Agent role hardening: side-effect functions (`pg_terminate_backend`,
   `dblink`) are limited only by the role; recommend a non-superuser role.
-- Smaller: plan diff side by side, autocomplete noise, keyset paging, counts on
+- Smaller: plan diff side by side, keyset paging, counts on
   their own connection, idle memory budget (RSS 200 MB, overcounts WebKit),
   the agent-write whistle.
 

@@ -1,16 +1,22 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { api, type Diagram, type RelationRef, type SchemaTable } from "./api";
-import { HEADER, ROW, WIDTH, edgePath, layOut, tableHeight, tableKey, type Point } from "./diagramLayout";
+import { HEADER, ROW, WIDTH, edgePath, layOut, schemaFrames, tableHeight, tableKey, type Point } from "./diagramLayout";
 
-type Props = { connectionId: string; visible: boolean; onOpen: (r: RelationRef) => void };
+type Props = {
+  connectionId: string;
+  /** The schema picked in the sidebar: only its tables are shown. */
+  only: string | null;
+  visible: boolean;
+  onOpen: (r: RelationRef) => void;
+};
 
 const MARGIN = 40;
 const clampZoom = (z: number) => Math.min(2, Math.max(0.2, z));
 const fileName = (path: string) => path.split("/").pop() ?? path;
 
 /** The tables and their references, from the live schema. Drag a table to move it; double-click opens it. */
-export function DiagramView({ connectionId, visible, onOpen }: Props) {
+export function DiagramView({ connectionId, only, visible, onOpen }: Props) {
   const [diagram, setDiagram] = useState<Diagram | null>(null);
   const [positions, setPositions] = useState<Record<string, Point>>({});
   const [zoom, setZoom] = useState(1);
@@ -134,9 +140,13 @@ export function DiagramView({ connectionId, visible, onOpen }: Props) {
   }
 
   const schema = diagram?.schema;
+  // Every table is laid out; a picked schema only narrows what's drawn.
   const tables = useMemo(
-    () => new Map((schema?.tables ?? []).map((t) => [tableKey(schema!.engine, t), t])),
-    [schema],
+    () =>
+      new Map(
+        (schema?.tables ?? []).filter((t) => !only || t.schema === only).map((t) => [tableKey(schema!.engine, t), t]),
+      ),
+    [schema, only],
   );
   const edges = useMemo(() => {
     if (!schema) return [];
@@ -229,13 +239,19 @@ export function DiagramView({ connectionId, visible, onOpen }: Props) {
   if (error && !diagram) return <p className="error">{error}</p>;
   if (!diagram || !schema) return <p className="hint">Reading the schema…</p>;
 
+  const frames = only ? [] : schemaFrames(schema, positions);
+  // What's drawn starts at the margin, however far its tables sit in the full layout.
+  const boxes = [
+    ...[...tables].flatMap(([k, t]) => (positions[k] ? [[...positions[k], WIDTH, tableHeight(t)]] : [])),
+    ...frames.map((f) => [f.x, f.y, f.width, f.height]),
+  ];
+  const origin: Point = boxes.length ? [Math.min(...boxes.map((b) => b[0])), Math.min(...boxes.map((b) => b[1]))] : [0, 0];
+  const shift = ([x, y]: Point): Point => [x - origin[0] + MARGIN, y - origin[1] + MARGIN];
   let width = 0;
   let height = 0;
-  for (const [k, [x, y]] of Object.entries(positions)) {
-    const t = tables.get(k);
-    if (!t) continue;
-    width = Math.max(width, x + WIDTH);
-    height = Math.max(height, y + tableHeight(t));
+  for (const [x, y, w, h] of boxes) {
+    width = Math.max(width, x - origin[0] + w);
+    height = Math.max(height, y - origin[1] + h);
   }
   width += MARGIN * 2 + 64;
   height += MARGIN * 2;
@@ -246,7 +262,8 @@ export function DiagramView({ connectionId, visible, onOpen }: Props) {
     <div className="diagram-view">
       <div className="toolbar" data-tauri-drag-region>
         <span className="muted">
-          {schema.tables.length.toLocaleString()} {schema.tables.length === 1 ? "table" : "tables"} · {edges.length.toLocaleString()}{" "}
+          {only && `${only} · `}
+          {tables.size.toLocaleString()} {tables.size === 1 ? "table" : "tables"} · {edges.length.toLocaleString()}{" "}
           {edges.length === 1 ? "reference" : "references"}
         </span>
         <span className="grow" />
@@ -282,12 +299,20 @@ export function DiagramView({ connectionId, visible, onOpen }: Props) {
         </button>
       </div>
       {error && <p className="error">{error}</p>}
-      {schema.tables.length === 0 ? (
+      {tables.size === 0 ? (
         <p className="hint">No tables here.</p>
       ) : (
         <div className="diagram-scroll" ref={setScroller} onPointerDown={pan}>
           <div style={{ width: width * zoom, height: height * zoom }}>
             <div className="diagram-canvas" style={{ width, height, transform: `scale(${zoom})` }}>
+              {frames.map((f) => {
+                const [x, y] = shift([f.x, f.y]);
+                return (
+                  <div key={f.schema} className="diagram-frame" style={{ left: x, top: y, width: f.width, height: f.height }}>
+                    <span>{f.schema}</span>
+                  </div>
+                );
+              })}
               <svg className="diagram-edges" width={width} height={height}>
                 {edges.map((e, i) => {
                   const from = positions[e.from];
@@ -325,8 +350,6 @@ export function DiagramView({ connectionId, visible, onOpen }: Props) {
     </div>
   );
 }
-
-const shift = ([x, y]: Point): Point => [x + MARGIN, y + MARGIN];
 
 type CardProps = {
   name: string;

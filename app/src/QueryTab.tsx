@@ -26,6 +26,8 @@ type Props = {
   connectionId: string;
   engine: "postgres" | "sqlite";
   schema: CompletionTable[];
+  /** The schema picked in the sidebar. */
+  activeSchema: string | null;
   sql: string;
   onSqlChange: (sql: string) => void;
   visible: boolean;
@@ -35,7 +37,7 @@ type Props = {
 
 type Failure = { message: string; statement?: Statement; position?: number | null };
 
-export function QueryTab({ connectionId, engine, schema, sql, onSqlChange, visible, autorun }: Props) {
+export function QueryTab({ connectionId, engine, schema, activeSchema, sql, onSqlChange, visible, autorun }: Props) {
   const [session, setSession] = useState<string | null>(null);
   const [writable, setWritable] = useState(false);
   const [running, setRunning] = useState(false);
@@ -283,6 +285,7 @@ export function QueryTab({ connectionId, engine, schema, sql, onSqlChange, visib
                 onChange={onSqlChange}
                 engine={engine}
                 schema={schema}
+                activeSchema={activeSchema}
                 onRun={run}
                 onFormat={format}
                 onExplain={explain}

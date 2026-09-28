@@ -3,11 +3,19 @@ import { useEffect, useRef } from "react";
 import { Compartment, EditorState, StateEffect, StateField } from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView, keymap, lineNumbers, placeholder } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
-import { PostgreSQL, SQLite, sql, type SQLNamespace } from "@codemirror/lang-sql";
-import { autocompletion, closeBrackets, closeCompletion, completionKeymap } from "@codemirror/autocomplete";
+import { PostgreSQL, SQLite, sql } from "@codemirror/lang-sql";
+import {
+  autocompletion,
+  closeBrackets,
+  closeCompletion,
+  type CompletionContext,
+  type CompletionResult,
+  completionKeymap,
+} from "@codemirror/autocomplete";
 import { bracketMatching, HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 import type { CompletionTable } from "./api";
+import { complete } from "./sqlComplete";
 
 export type EditorSnapshot = { text: string; from: number; to: number; head: number };
 
@@ -16,6 +24,8 @@ export type SqlEditorProps = {
   onChange: (value: string) => void;
   engine: "postgres" | "sqlite";
   schema: CompletionTable[];
+  /** The schema picked in the sidebar; its tables are suggested first. */
+  activeSchema?: string | null;
   onRun: (mode: "statement" | "all", at: EditorSnapshot) => void;
   onFormat: (at: EditorSnapshot) => void;
   onExplain: (analyze: boolean, at: EditorSnapshot) => void;
@@ -67,18 +77,17 @@ const theme = EditorView.theme({
   ".cm-sql-error": { textDecoration: "underline wavy var(--accent)", textUnderlineOffset: "3px" },
 });
 
-function language(engine: SqlEditorProps["engine"], schema: CompletionTable[]) {
-  const namespace: SQLNamespace = {};
-  for (const t of schema) {
-    const s = (namespace as Record<string, Record<string, string[]>>)[t.schema] ?? {};
-    s[t.name] = t.columns;
-    (namespace as Record<string, Record<string, string[]>>)[t.schema] = s;
-  }
-  return sql({
-    dialect: engine === "postgres" ? PostgreSQL : SQLite,
-    schema: namespace,
-    defaultSchema: engine === "postgres" ? "public" : "main",
-  });
+/** Keywords from lang-sql; tables and columns from what the statement names (sqlComplete). */
+function language(engine: SqlEditorProps["engine"], schema: CompletionTable[], activeSchema: string | null) {
+  const support = sql({ dialect: engine === "postgres" ? PostgreSQL : SQLite });
+  const source = (ctx: CompletionContext): CompletionResult | null => {
+    const found = complete(ctx.state.doc.toString(), ctx.pos, schema, { engine, activeSchema });
+    if (!found) return null;
+    // Nothing typed yet: only when asked (⌃Space) or right after a dot.
+    if (found.from === ctx.pos && !ctx.explicit && ctx.state.sliceDoc(ctx.pos - 1, ctx.pos) !== ".") return null;
+    return { ...found, validFor: /^"?[\w$]*$/ };
+  };
+  return [support, support.language.data.of({ autocomplete: source })];
 }
 
 function snapshot(view: EditorView): EditorSnapshot {
@@ -105,7 +114,7 @@ export default function SqlEditor(props: SqlEditorProps) {
           closeBrackets(),
           bracketMatching(),
           autocompletion({ activateOnTyping: true }),
-          lang.current.of(language(props.engine, props.schema)),
+          lang.current.of(language(props.engine, props.schema, props.activeSchema ?? null)),
           syntaxHighlighting(highlight),
           errorField,
           placeholder("select …    ⌘↵ runs the statement under the cursor, ⇧⌘↵ runs all"),
@@ -143,8 +152,8 @@ export default function SqlEditor(props: SqlEditorProps) {
   }, [props.value]);
 
   useEffect(() => {
-    view.current?.dispatch({ effects: lang.current.reconfigure(language(props.engine, props.schema)) });
-  }, [props.engine, props.schema]);
+    view.current?.dispatch({ effects: lang.current.reconfigure(language(props.engine, props.schema, props.activeSchema ?? null)) });
+  }, [props.engine, props.schema, props.activeSchema]);
 
   useEffect(() => {
     view.current?.dispatch({ effects: setErrorRange.of(props.errorRange) });

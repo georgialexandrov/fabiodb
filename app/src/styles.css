@@ -128,7 +128,7 @@ select:focus, input:focus, textarea:focus { border-color: var(--accent); }
 
 .relations { flex: 1; overflow: auto; padding: 8px 6px; }
 .relations-head { display: flex; flex-wrap: wrap; gap: 2px 4px; margin: 0 2px 6px; }
-.relations-head input { flex: 1 0 100%; min-width: 0; }
+.relations-head input, .relations-head .schema-pick { flex: 1 0 100%; min-width: 0; }
 .schema { font-size: 11px; font-weight: 600; color: var(--muted); padding: 8px 8px 2px; text-transform: uppercase; letter-spacing: 0.4px; }
 .relation.view, .relation.materialized_view { font-style: italic; }
 .count { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
@@ -421,6 +421,8 @@ button.icon.on { color: var(--accent); }
 .diagram-scroll.panning, body.dragging, body.dragging * { cursor: grabbing !important; }
 .diagram-canvas { position: relative; transform-origin: 0 0; }
 .diagram-edges { position: absolute; inset: 0; pointer-events: none; }
+.diagram-frame { position: absolute; border: 1px dashed var(--line); border-radius: 12px; pointer-events: none; }
+.diagram-frame > span { position: absolute; top: 6px; left: 12px; font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.4px; }
 .diagram-edges path { fill: none; stroke: var(--muted); stroke-width: 1; opacity: 0.45; }
 .diagram-edges path.on { stroke: var(--accent); stroke-width: 1.5; opacity: 1; }
 .diagram-table { cursor: default; position: absolute; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; font-size: 12px; box-shadow: 0 1px 2px #0000000d; transition: opacity 120ms; }

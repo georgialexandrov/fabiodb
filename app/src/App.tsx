@@ -54,6 +54,16 @@ let nextTab = 1;
 
 /** Tabs and the workspace in use, kept between launches ("where you left it"). */
 const LAYOUT_KEY = "fabio.layout";
+/** The schema picked per workspace; absent = every schema. */
+const SCHEMAS_KEY = "fabio.schemas";
+
+function savedSchemas(): Record<string, string> {
+  try {
+    return JSON.parse(localStorage.getItem(SCHEMAS_KEY) ?? "{}") ?? {};
+  } catch {
+    return {};
+  }
+}
 type Layout = { activeId: string | null; tabs: Tab[]; activeTab: Record<string, string | null> };
 
 function savedLayout(): Layout | null {
@@ -72,6 +82,7 @@ export default function App() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [relations, setRelations] = useState<Record<string, Relation[]>>({});
   const [schemas, setSchemas] = useState<Record<string, CompletionTable[]>>({});
+  const [pickedSchema, setPickedSchema] = useState<Record<string, string>>(savedSchemas);
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeTab, setActiveTab] = useState<Record<string, string | null>>({});
   const [editing, setEditing] = useState<SavedConnection | null | undefined>(undefined);
@@ -122,6 +133,14 @@ export default function App() {
       // Not remembered this time.
     }
   }, [activeId, tabs, activeTab, connections.length]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(SCHEMAS_KEY, JSON.stringify(pickedSchema));
+    } catch {
+      // Not remembered this time.
+    }
+  }, [pickedSchema]);
 
   // The MCP server writes agent statements to the shared audit log from its own
   // process; poll it while the window is visible. Idle when hidden.
@@ -348,15 +367,27 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   });
 
+  const schemaNames = useMemo(
+    () => [...new Set(((activeId && relations[activeId]) || []).map((r) => r.schema))].sort(),
+    [relations, activeId],
+  );
+  /** The picked schema of a workspace, while it still exists there. */
+  const schemaOf = (id: string): string | null => {
+    const s = pickedSchema[id];
+    return s && (relations[id] ?? []).some((r) => r.schema === s) ? s : null;
+  };
+  const activeSchema = activeId ? schemaOf(activeId) : null;
+
   const grouped = useMemo(() => {
     const q = search.toLowerCase();
     const groups = new Map<string, Relation[]>();
     for (const r of (activeId && relations[activeId]) || []) {
+      if (activeSchema && r.schema !== activeSchema) continue;
       if (q && !r.name.toLowerCase().includes(q)) continue;
       groups.set(r.schema, [...(groups.get(r.schema) ?? []), r]);
     }
     return groups;
-  }, [relations, activeId, search]);
+  }, [relations, activeId, activeSchema, search]);
 
   // "Agent ran 3 queries on chinook · 42 ms": the latest connection an agent used, lately.
   const agentSummary = useMemo(() => {
@@ -492,6 +523,28 @@ export default function App() {
           <div className="relations">
             <div className="relations-head">
               <input placeholder="Filter tables" value={search} onChange={(e) => setSearch(e.target.value)} spellCheck={false} />
+              {schemaNames.length > 1 && activeId && (
+                <select
+                  className="schema-pick"
+                  value={activeSchema ?? ""}
+                  title="Show one schema; queries suggest its tables first"
+                  onChange={(e) => {
+                    const id = activeId;
+                    const value = e.target.value;
+                    setPickedSchema((all) => {
+                      const { [id]: _, ...rest } = all;
+                      return value ? { ...rest, [id]: value } : rest;
+                    });
+                  }}
+                >
+                  <option value="">All schemas</option>
+                  {schemaNames.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              )}
               <button className="ghost" onClick={() => newQuery()} title="New query (⌘T)">
                 SQL
               </button>
@@ -598,7 +651,7 @@ export default function App() {
           if (t.kind === "diagram") {
             return (
               <div key={t.id} className="tab-page" style={{ display: visible ? "flex" : "none" }}>
-                <DiagramView connectionId={t.connectionId} visible={visible} onOpen={openTable} />
+                <DiagramView connectionId={t.connectionId} only={schemaOf(t.connectionId)} visible={visible} onOpen={openTable} />
               </div>
             );
           }
@@ -622,6 +675,7 @@ export default function App() {
                 connectionId={t.connectionId}
                 engine={conn.target.engine}
                 schema={schemas[t.connectionId] ?? []}
+                activeSchema={schemaOf(t.connectionId)}
                 sql={t.sql}
                 autorun={t.autorun}
                 onSqlChange={(sql) => setTabs((all) => all.map((x) => (x.id === t.id ? { ...x, sql } : x)))}

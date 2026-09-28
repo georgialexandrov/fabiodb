@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Schema, SchemaTable } from "./api";
-import { WIDTH, edgePath, layOut, tableKey } from "./diagramLayout";
+import { WIDTH, edgePath, layOut, schemaFrames, tableKey } from "./diagramLayout";
 
 function table(name: string, refs: string[] = [], schema = "public"): SchemaTable {
   return {
@@ -52,5 +52,37 @@ describe("edgePath", () => {
   it("runs from the side facing the other table", () => {
     expect(edgePath([400, 0], 0, [0, 0], 0).startsWith("M400,")).toBe(true);
     expect(edgePath([0, 0], 0, [400, 0], 0).startsWith(`M${WIDTH},`)).toBe(true);
+  });
+});
+
+describe("schemas", () => {
+  const tables = [table("album"), table("track", ["album"]), table("invoice", [], "billing"), table("line", [], "billing")];
+  tables[3].foreign_keys = [{ name: null, columns: ["id"], ref_schema: "billing", ref_table: "invoice", ref_columns: ["id"] }];
+
+  it("each get their own block, the default schema first", () => {
+    const p = layOut(schema(tables), {});
+    const publicRight = Math.max(p.album[0], p.track[0]) + WIDTH;
+    expect(Math.min(p["billing.invoice"][0], p["billing.line"][0])).toBeGreaterThan(publicRight);
+    expect(p["billing.invoice"][0]).toBeLessThan(p["billing.line"][0]);
+  });
+
+  it("get a frame around their tables, clear of other schemas", () => {
+    const p = layOut(schema(tables), {});
+    const [pub, billing] = schemaFrames(schema(tables), p);
+    expect(pub.schema).toBe("public");
+    expect(billing.schema).toBe("billing");
+    expect(pub.x + pub.width).toBeLessThan(billing.x);
+    expect(Math.min(pub.y, billing.y)).toBeGreaterThanOrEqual(0);
+  });
+
+  it("new tables join their schema's block", () => {
+    const first = layOut(schema(tables.slice(0, 3)), {});
+    const p = layOut(schema(tables), first);
+    expect(p["billing.line"][0]).toBe(first["billing.invoice"][0]);
+    expect(p["billing.line"][1]).toBeGreaterThan(first["billing.invoice"][1]);
+  });
+
+  it("one schema needs no frame", () => {
+    expect(schemaFrames(schema([table("a")]), { a: [0, 0] })).toEqual([]);
   });
 });
