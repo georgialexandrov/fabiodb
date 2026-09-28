@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Fabio — charts on results (demo)</title>
+<style>
+:root {
+  color-scheme: light;
+  --bg: #fbfaf8; --sidebar: #f3f1ed; --surface: #ffffff; --text: #2b2a28; --muted: #8d8a85;
+  --line: #ebe8e3; --hover: #ebe8e2; --accent: #d9534f; --accent-soft: #d9534f1f;
+  --mark: #6b6660; --grid: #efece7;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #1f1f1f; --sidebar: #262625; --surface: #2a2a29; --text: #e6e4e0; --muted: #8a8782;
+  --line: #353432; --hover: #32312f; --accent-soft: #d9534f33;
+  --mark: #b9b5ae; --grid: #333230;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70;
+}
+* { box-sizing: border-box; }
+body { margin: 0; font: 13px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif; background: var(--bg); color: var(--text); display: grid; grid-template-columns: 250px 1fr; height: 100vh; }
+aside { background: var(--sidebar); padding: 18px 10px; border-right: 1px solid var(--line); overflow: auto; }
+aside h1 { font-size: 13px; margin: 0 8px 2px; }
+aside p.muted { margin: 0 8px 14px; }
+.muted { color: var(--muted); }
+.q { display: block; width: 100%; text-align: left; border: 0; background: none; color: inherit; font: inherit; padding: 6px 8px; border-radius: 6px; cursor: default; }
+.q:hover { background: var(--hover); }
+.q.active { background: var(--surface); box-shadow: inset 2px 0 0 var(--accent); }
+.q small { display: block; color: var(--muted); }
+main { display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+pre.sql { margin: 0; padding: 14px 20px; font: 12px/1.5 var(--mono); background: var(--surface); border-bottom: 1px solid var(--line); white-space: pre-wrap; }
+.bar { display: flex; align-items: center; gap: 14px; padding: 10px 20px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.seg { display: inline-flex; background: var(--sidebar); border-radius: 7px; padding: 2px; }
+.seg button { border: 0; background: none; font: inherit; color: var(--text); padding: 3px 11px; border-radius: 5px; }
+.seg button.on { background: var(--surface); box-shadow: 0 0 0 1px var(--line); font-weight: 600; }
+.seg button:disabled { color: var(--muted); opacity: .5; }
+label { color: var(--muted); }
+select { font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 5px; padding: 1px 4px; }
+.why { padding: 10px 20px 0; }
+.why b { font-weight: 600; }
+.stage { flex: 1; overflow: auto; padding: 6px 20px 20px; position: relative; }
+.title { font-weight: 600; font-size: 14px; margin: 8px 0 2px; }
+.legend { display: flex; gap: 14px; margin: 4px 0 6px; color: var(--muted); }
+.legend span::before { content: ""; display: inline-block; width: 10px; height: 3px; border-radius: 2px; background: var(--c); vertical-align: middle; margin-right: 6px; }
+svg { display: block; overflow: visible; }
+svg text { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+svg .label { fill: var(--text); }
+.tip { position: fixed; pointer-events: none; background: var(--surface); border: 1px solid var(--line); border-radius: 7px; padding: 7px 10px; box-shadow: 0 4px 16px #0000001a; font-variant-numeric: tabular-nums; display: none; z-index: 5; max-width: 280px; }
+.tip .k { color: var(--muted); }
+.tip i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: var(--c); }
+.hero { font-size: 52px; font-weight: 600; letter-spacing: -1px; margin: 40px 0 0; font-variant-numeric: tabular-nums; }
+table { border-collapse: collapse; font-variant-numeric: tabular-nums; margin-top: 8px; }
+th, td { text-align: left; padding: 3px 14px 3px 0; border-bottom: 1px solid var(--line); }
+th { color: var(--muted); font-weight: 500; }
+td.num { text-align: right; }
+details { padding: 0 20px 14px; }
+details pre { font: 11px/1.45 var(--mono); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 10px; }
+summary { color: var(--muted); }
+.theme { margin-left: auto; }
+</style>
+</head>
+<body>
+<aside>
+  <h1>Charts on results</h1>
+  <p class="muted">A demo on Chinook. Pick a query; Fabio picks the chart from the column types.</p>
+  <div id="list"></div>
+</aside>
+<main>
+  <pre class="sql" id="sql"></pre>
+  <div class="bar">
+    <div class="seg" id="forms"></div>
+    <span id="pickers"></span>
+    <div class="seg theme" id="theme"></div>
+  </div>
+  <div class="why" id="why"></div>
+  <div class="stage" id="stage"></div>
+  <details><summary>Saved with the query (what an agent gets back through MCP)</summary><pre id="spec"></pre></details>
+</main>
+<div class="tip" id="tip"></div>
+<script>
+const DATA = {
+genre: [["Rock", 826.65], ["Latin", 382.14], ["Metal", 261.36], ["Alternative & Punk", 241.56], ["TV Shows", 93.53], ["Jazz", 79.20], ["Blues", 60.39], ["Drama", 57.71], ["Classical", 40.59], ["R&B/Soul", 40.59], ["Sci Fi & Fantasy", 39.80], ["Reggae", 29.70], ["Pop", 27.72], ["Soundtrack", 19.80], ["Comedy", 17.91], ["Hip Hop/Rap", 16.83], ["Bossa Nova", 14.85], ["Alternative", 13.86], ["World", 12.87], ["Science Fiction", 11.94], ["Heavy Metal", 11.88], ["Electronica/Dance", 11.88], ["Easy Listening", 9.90], ["Rock And Roll", 5.94]],
+monthly: [["2021-01-01", 35.64], ["2021-02-01", 37.62], ["2021-03-01", 37.62], ["2021-04-01", 37.62], ["2021-05-01", 37.62], ["2021-06-01", 37.62], ["2021-07-01", 37.62], ["2021-08-01", 37.62], ["2021-09-01", 37.62], ["2021-10-01", 37.62], ["2021-11-01", 37.62], ["2021-12-01", 37.62], ["2022-01-01", 52.62], ["2022-02-01", 46.62], ["2022-03-01", 44.62], ["2022-04-01", 37.62], ["2022-05-01", 37.62], ["2022-06-01", 37.62], ["2022-07-01", 37.62], ["2022-08-01", 37.62], ["2022-09-01", 36.63], ["2022-10-01", 37.62], ["2022-11-01", 37.62], ["2022-12-01", 37.62], ["2023-01-01", 37.62], ["2023-02-01", 37.62], ["2023-03-01", 37.62], ["2023-04-01", 51.62], ["2023-05-01", 42.62], ["2023-06-01", 50.62], ["2023-07-01", 37.62], ["2023-08-01", 37.62], ["2023-09-01", 37.62], ["2023-10-01", 37.62], ["2023-11-01", 23.76], ["2023-12-01", 37.62], ["2024-01-01", 37.62], ["2024-02-01", 37.62], ["2024-03-01", 37.62], ["2024-04-01", 37.62], ["2024-05-01", 37.62], ["2024-06-01", 37.62], ["2024-07-01", 39.62], ["2024-08-01", 47.62], ["2024-09-01", 46.71], ["2024-10-01", 42.62], ["2024-11-01", 37.62], ["2024-12-01", 37.62], ["2025-01-01", 37.62], ["2025-02-01", 27.72], ["2025-03-01", 37.62], ["2025-04-01", 33.66], ["2025-05-01", 37.62], ["2025-06-01", 37.62], ["2025-07-01", 37.62], ["2025-08-01", 37.62], ["2025-09-01", 37.62], ["2025-10-01", 37.62], ["2025-11-01", 49.62], ["2025-12-01", 38.62]],
+bycountry: [["2021-01-01", "Canada", 17.82], ["2021-01-01", "France", 19.80], ["2021-01-01", "USA", 28.71], ["2021-04-01", "Canada", 2.97], ["2021-04-01", "France", 5.94], ["2021-04-01", "USA", 32.67], ["2021-07-01", "Canada", 32.67], ["2021-07-01", "USA", 14.85], ["2021-10-01", "Canada", 3.96], ["2021-10-01", "France", 9.90], ["2021-10-01", "USA", 27.72], ["2022-01-01", "Canada", 19.83], ["2022-01-01", "France", 1.98], ["2022-01-01", "USA", 24.77], ["2022-04-01", "Canada", 22.77], ["2022-04-01", "France", 21.78], ["2022-04-01", "USA", 28.71], ["2022-07-01", "Canada", 1.98], ["2022-07-01", "France", 9.90], ["2022-07-01", "USA", 34.65], ["2022-10-01", "Canada", 31.68], ["2022-10-01", "France", 5.94], ["2022-10-01", "USA", 14.85], ["2023-01-01", "Canada", 25.74], ["2023-01-01", "France", 9.90], ["2023-01-01", "USA", 11.88], ["2023-04-01", "Canada", 5.94], ["2023-04-01", "France", 8.95], ["2023-04-01", "USA", 36.68], ["2023-07-01", "Canada", 8.91], ["2023-07-01", "France", 17.82], ["2023-07-01", "USA", 28.71], ["2023-10-01", "Canada", 14.85], ["2023-10-01", "France", 5.94], ["2023-10-01", "USA", 25.74], ["2024-01-01", "Canada", 9.90], ["2024-01-01", "France", 8.91], ["2024-01-01", "USA", 17.82], ["2024-04-01", "Canada", 25.74], ["2024-04-01", "USA", 17.82], ["2024-07-01", "Canada", 1.98], ["2024-07-01", "France", 4.95], ["2024-07-01", "USA", 64.62], ["2024-10-01", "Canada", 4.95], ["2024-10-01", "France", 22.80], ["2024-10-01", "USA", 27.72], ["2025-01-01", "Canada", 19.80], ["2025-01-01", "France", 19.80], ["2025-01-01", "USA", 13.86], ["2025-04-01", "Canada", 21.78], ["2025-04-01", "France", 8.91], ["2025-04-01", "USA", 19.80], ["2025-07-01", "Canada", 24.75], ["2025-07-01", "France", 8.91], ["2025-07-01", "USA", 19.80], ["2025-10-01", "Canada", 5.94], ["2025-10-01", "France", 2.97], ["2025-10-01", "USA", 31.68]],
+tracks: [["Truth Hurts", 5.25, 9.75], ["When I Look At The World", 4.30, 8.11], ["Love Rescue Me", 6.41, 11.93], ["Zombie Eaters", 6.01, 11.29], ["Bring Your Daughter... To The Slaughter", 5.30, 4.85], ["Cabeça Dinossauro", 0.62, 1.16], ["Nene 2001", 4.75, 9.25], ["You Can't Do it Right (With the One You Love)", 3.40, 6.40], ["My Ship", 4.47, 8.18], ["Wasted My Hate", 3.95, 7.40], ["Drowning Man", 4.24, 8.07], ["Tempo Perdido", 5.04, 9.50], ["Stripsearch", 4.50, 8.45], ["Seis Da Tarde", 3.97, 7.57], ["When Love Comes To Town", 4.30, 8.09], ["Shiny Happy People", 3.77, 7.13], ["Whole Lotta Love", 14.40, 26.89], ["Elvis Ate America", 3.00, 5.58], ["Rock And Roll All Nite", 2.89, 5.47], ["The Edge Of Darkness", 6.66, 15.23], ["Slow An' Easy", 6.12, 11.41], ["One Vision", 4.04, 7.57], ["Bê-a-Bá", 4.15, 7.75], ["Meditação", 2.48, 4.64], ["Fire In The Basement", 4.73, 8.84], ["Fight From The Inside", 3.08, 5.80], ["Fly Me To The Moon", 2.49, 4.63], ["Love Boat Captain", 4.61, 8.60], ["Powerslave", 6.80, 9.34], ["It's a Mistake", 4.56, 8.56], ["Winterlong", 4.99, 9.22], ["Love In An Elevator", 5.36, 10.06], ["Running Free", 3.41, 4.69], ["Spirit's in the Material World", 3.02, 5.71], ["Freedom For My People", 0.64, 1.19], ["A Cor Do Sol", 3.86, 7.31], ["Waiting", 3.21, 6.02], ["Revolution 1993", 10.28, 19.85], ["The Lemon Song", 6.32, 11.89], ["White Room", 5.03, 9.42], ["Dee", 4.36, 8.16], ["Communication Breakdown", 3.21, 6.00], ["Lick It Up", 4.00, 7.43], ["I Can't Stand It", 4.16, 7.89], ["Speed Of Light", 4.38, 8.17], ["We Are The Champions", 3.02, 5.61], ["Are You Gonna Be My Girl", 3.56, 6.67], ["Zero", 2.69, 5.02], ["Padre Cícero", 2.33, 4.37], ["Remote Control", 3.00, 5.67], ["O Segundo Sol", 4.20, 7.95], ["She", 4.14, 7.85], ["Evil Woman", 3.42, 6.35], ["Brasília 5:31", 2.97, 5.59], ["There Goes The Neighborhood", 5.84, 10.91], ["White Feather", 2.39, 4.49], ["Badge", 2.73, 5.08], ["Nobody's Home", 4.05, 7.56], ["Todo o Carnaval tem seu Fim", 3.96, 9.06], ["Menestrel Das Alagoas", 3.33, 6.24], ["Radio Free Aurope", 4.09, 7.79], ["Where Did I Go Wrong", 3.78, 7.14], ["(Wish I Could) Hideaway", 3.81, 7.09], ["Go West", 3.97, 7.42], ["Radio Song", 4.26, 8.03], ["Stars", 4.14, 7.82], ["Caçador de Mim (Sá & Guarabyra)", 3.97, 7.39], ["Voce Nao Entende Nada - Cotidiano", 7.03, 13.24], ["Everlasting Love", 3.38, 6.40], ["Revolution", 4.27, 7.98], ["My World", 5.76, 10.73], ["The Refugee", 3.69, 7.03], ["Onde Você Mora?", 4.27, 8.11], ["As Tears Go By", 2.74, 5.11], ["O Bicho Tá Pregando", 2.87, 5.42], ["07 - Strange World", 5.54, 7.61], ["Mis Penas Lloraba Yo (Ao Vivo) Soy Gitano (Tangos)", 3.14, 5.91], ["Elza", 3.32, 6.22], ["Snowblind", 5.53, 10.31], ["A Touch Away", 4.61, 8.68], ["W/Brasil (Chama O Síndico)", 5.29, 10.11], ["Heart Of Soul", 4.57, 8.55], ["Domingo", 3.48, 6.56], ["O Último Romântico (Ao Vivo)", 3.87, 7.34], ["Pride (In The Name Of Love)", 3.84, 7.20], ["Arrepio", 2.27, 4.30], ["Daniela", 3.85, 7.39], ["The Begining... At Last", 6.09, 11.41], ["Look What You've Done", 3.85, 7.17], ["Old School Hollywood", 2.95, 5.56], ["So Beautiful", 4.97, 9.38], ["Show Me How to Live", 4.63, 6.36], ["Lords Of The Backstage", 1.88, 3.57], ["This Velvet Glove", 3.75, 7.13], ["Wearing And Tearing", 5.50, 10.21], ["Voce e Linda", 4.05, 7.68], ["The Pan Piper", 3.90, 7.24], ["Minor Thing", 3.63, 6.82], ["Hammer To Fall", 3.67, 6.92], ["Jacob's Ladder", 6.13, 11.64], ["Solitaire", 4.70, 8.73], ["What A Day", 2.64, 4.96], ["Dazed and Confused", 6.70, 12.43], ["The Calling", 12.46, 23.56], ["Play The Game", 3.56, 6.60], ["My Love", 3.39, 6.46], ["Fall To Pieces", 4.51, 8.41], ["Stir It Up (Live)", 4.71, 9.15], ["The Thin Line Between Love & Hate", 8.45, 19.33], ["The Girl I Love She Got Long Black Wavy Hair", 3.06, 5.72], ["Querem Meu Sangue", 3.54, 6.74], ["Sangue Latino", 3.72, 7.01], ["Introdução (Live)", 2.57, 4.99], ["Resolve", 4.81, 8.98], ["Some Days Are Better Than Others", 4.29, 8.03], ["Layla", 7.18, 13.46], ["Cabron", 3.64, 7.11], ["Showcase", 3.36, 6.39], ["Gostava Tanto De Você", 4.23, 7.99], ["Soul Singing", 3.89, 7.32], ["Tryin' To Throw Your Arms Around The World", 3.87, 7.26], ["The Righteous & The Wicked", 4.13, 7.76], ["Blissed & Gone", 4.77, 8.87], ["The Witch", 4.31, 8.32], ["Boogie With Stu", 3.89, 7.30], ["Run To The Hills", 4.87, 11.15], ["Woodpecker From Mars", 5.68, 10.66], ["Ram It Down", 4.87, 9.11], ["Come Around Again", 4.51, 8.46], ["Snowballed", 3.39, 6.29], ["The Alchemist", 8.49, 15.78], ["Holy Smoke", 3.82, 3.50], ["It's Too Funky In Here", 3.98, 7.60], ["Out Of Sight", 2.40, 4.49], ["Bohemian Rhapsody", 5.98, 11.08], ["Fool In The Rain", 6.22, 11.80], ["Boris The Spider", 2.49, 4.61], ["Travelling Riverside Blues", 5.20, 9.76], ["All or None", 4.63, 8.68], ["Dirty Little Thing", 3.96, 7.37], ["How The West Was Won And Where It Got Us", 4.52, 8.58], ["Cafezinho", 3.02, 5.75], ["Seek And You Shall Find", 3.72, 6.97], ["Springsville", 3.46, 6.46], ["Gangland", 3.81, 3.05], ["All For You", 3.93, 7.37], ["Up In Arms", 2.26, 4.20], ["Don't Stand So Close to Me '86", 4.89, 9.19], ["Aprendendo A Jogar", 4.84, 8.96], ["Já!!!", 3.63, 6.77], ["Linha Do Equador", 4.99, 9.54], ["Do You Love Me", 3.58, 6.65], ["Millenium", 6.32, 11.93], ["Comin' Home", 2.87, 5.40], ["Please Don't Touch", 2.83, 5.30], ["Hooked Up", 4.60, 8.87], ["Perfect", 3.38, 6.42], ["Wake Me Up When September Ends", 4.76, 8.89], ["Preciso Apender a Viver Só (Maysa)", 2.39, 4.43], ["The Maids Of Cadiz", 3.89, 7.16], ["Under The Sun/Every Day Comes and Goes", 5.84, 10.83], ["Poofter's Froth Wyoming Plans Ahead", 3.07, 5.73], ["Los Pretos", 3.99, 7.65], ["The Crunge", 3.29, 6.16], ["Hats Off To (Roy) Harper", 3.66, 6.90], ["Bring It On Home", 4.33, 8.10], ["Stairway To Heaven", 8.03, 14.98], ["Best Of You", 4.26, 7.98], ["Solo-Panhandler", 4.10, 7.85], ["Die Die My Darling", 2.49, 4.64], ["The Morning After", 3.73, 7.02], ["Wicked Ways", 6.56, 12.23], ["Us And Them", 7.68, 14.31], ["Helpless", 5.44, 10.25], ["Só Tinha De Ser Com Você", 6.49, 12.48], ["Perfeição", 4.61, 8.83], ["Another One Bites The Dust", 3.62, 6.84], ["Red Mosquito", 4.05, 7.58], ["Right Through You", 2.94, 5.52], ["Look For The Truth", 5.17, 11.84], ["Some Heads Are Gonna Roll", 4.17, 7.82], ["Pretty Tied Up", 4.79, 8.97], ["Boa Noite", 5.65, 10.76], ["Parabolicamará", 4.75, 9.10], ["A Luz De Tieta", 4.20, 8.11], ["Rearviewmirror", 4.74, 8.89], ["Poor Tom", 3.04, 5.74], ["Be Quick Or Be Dead", 3.41, 7.80], ["Sanctuary", 5.29, 12.11], ["Keep It To Myself (Aka Keep It To Yourself)", 2.77, 5.23], ["Eu Apenas Queria Que Voçê Soubesse", 2.59, 4.89], ["Gavioes 2001", 4.71, 9.17], ["Hey Hey", 3.27, 6.24], ["Intro/ Low Down", 5.39, 10.15], ["Last Night On Earth", 4.76, 8.97], ["Make It Funky Pt.1", 3.27, 6.21], ["Night Train", 3.54, 6.70], ["Tyrant (Live)", 4.70, 8.76], ["The God That Failed", 5.14, 9.59], ["Nothing Else Matters", 6.48, 12.02], ["Halo", 5.11, 9.56], ["Wrathchild", 2.90, 3.99], ["One For The Road", 2.84, 6.50], ["For Your Babies", 4.28, 8.02], ["Loves Been Good To Me", 3.40, 6.34], ["Moon Is Up", 3.70, 7.03], ["Be Good Johnny", 3.61, 6.81], ["Lourinha Bombril", 2.66, 5.06], ["Warm Tape", 4.28, 7.97], ["Funk De Bamba (Com Fernanda Abreu)", 3.95, 7.50], ["Now I'm Here", 4.26, 7.94], ["Saudade Dos Aviões Da Panair (Conversando No Bar)", 4.48, 8.40], ["Moby Dick", 4.35, 8.26], ["Don't Stop Me Now", 3.53, 6.58], ["Drown", 4.51, 8.47], ["Heaven Can Wait", 7.36, 10.11], ["Machine Men", 5.69, 10.62], ["Hysteria", 5.92, 11.08], ["I Could Die For You", 3.23, 6.04], ["Purple Haze", 2.86, 5.34], ["Army Ants", 3.59, 6.75], ["Road Trippin'", 3.43, 6.38], ["Tombstone Shadow", 3.65, 6.88], ["Fé Cega, Faca Amolada", 4.63, 8.83], ["Best Thing", 4.57, 8.65], ["Montsegur", 5.84, 13.37], ["14 Years", 4.36, 8.15], ["Sambassim (dj patife remix)", 3.56, 6.91], ["Don't Forget Me", 4.63, 8.69], ["Reboladeira", 3.51, 6.70], ["Dealer", 3.85, 7.24], ["Equinocio", 4.48, 8.46], ["Seven Seas Of Rhye", 2.84, 5.28], ["Eye Of The Beholder", 6.43, 12.16], ["Cold Day In The Sun", 3.35, 6.29], ["Macô", 4.16, 7.87], ["Sem Terra", 4.66, 8.77], ["Texto \"Verdade Tropical\"", 1.40, 2.62], ["Won't Get Fooled Again (Full Length Version)", 8.56, 16.07], ["Jump Around (Pete Rock Remix)", 3.94, 9.01], ["Unemployable", 3.07, 5.79], ["New Year's Day", 5.60, 10.54], ["Everything I Need", 3.61, 6.78], ["What is and Should Never Be", 4.34, 8.10], ["Samba Makossa", 4.53, 8.67], ["Beijo do Olhar", 4.21, 7.98], ["Vida De Cachorro", 3.25, 6.11], ["Carta Ao Tom 74", 2.71, 5.13], ["Wrathchild", 3.10, 7.09], ["Bite The Bullet", 1.64, 3.05], ["A Castle Full Of Rascals", 5.19, 9.69], ["Império Serrano", 5.58, 10.64], ["I'm Coming Virginia", 4.67, 8.78], ["Música Ambiente", 4.13, 7.85], ["Come Back", 5.50, 10.27], ["Canção Noturna", 3.98, 7.51], ["Gates Of Tomorrow", 5.20, 11.90], ["Stuck With Me", 2.26, 4.23], ["Down By The Seaside", 5.27, 9.89], ["St. Jimmy", 2.92, 5.45], ["It's Just A Thought", 3.96, 7.42], ["Twentienth Century Fox", 2.57, 4.83], ["Child In Time", 10.34, 19.29], ["Olodum - Alegria Geral", 3.89, 7.40], ["Lamento De Carnaval", 4.91, 9.36], ["The Last To Know", 4.46, 8.33], ["Crash Course In Brain Surgery", 3.17, 5.94], ["Creeping Death", 5.13, 9.64], ["Demorou!", 0.65, 1.23], ["Bleed The Freak", 4.03, 7.48], ["Que Maravilha", 5.63, 10.49], ["A Via Láctea", 4.67, 8.81], ["Onde Você Mora?", 4.97, 9.59], ["Nosso Adeus", 3.44, 6.48], ["When The Levee Breaks", 7.13, 13.27], ["Bad Seed", 4.09, 7.65], ["Homely Girl", 3.40, 6.48], ["Nefertiti", 7.89, 14.76], ["Midnight", 4.45, 8.44], ["You Fool No One (Alternate Version)", 12.73, 23.73], ["Sleep On The Sidewalk", 3.12, 5.82], ["As Pegadas Do Amor", 3.49, 6.58], ["Why Go", 3.34, 6.24], ["Falar A Verdade", 4.08, 7.81], ["Siva", 4.35, 8.18], ["True Believers", 5.13, 9.52], ["Brain Damage", 3.84, 7.15], ["Jungle Drums", 3.33, 6.24], ["Just Another Story", 8.83, 16.77], ["Lavadeira", 3.57, 6.92], ["Too Young To Die", 6.10, 11.82], ["Bush Doctor", 4.00, 7.57], ["Downtown", 4.00, 7.65], ["Radio Song", 4.54, 8.46], ["Filho Maravilha", 3.79, 7.15], ["Spanish moss-\"A sound portrait\"-Spanish moss", 4.13, 7.84], ["Little Linda", 4.40, 8.54], ["Sul Da América", 4.25, 8.09], ["Xote Dos Milagres", 4.49, 8.49], ["Down Under", 3.70, 7.02], ["Um Amor Puro", 5.46, 10.19], ["Playtime", 4.56, 8.65], ["The Great Gig In The Sky", 4.73, 8.72], ["Midget", 3.62, 6.92], ["Breakdown", 7.08, 13.33], ["Salutations", 1.15, 2.64], ["Primavera", 2.11, 3.96], ["Deixa Entrar", 0.56, 1.04], ["Tears In Heaven", 4.58, 8.61], ["The End", 11.70, 21.87], ["Aviso Aos Navegantes", 4.05, 7.69], ["Praise", 3.93, 7.48], ["Sometimes You Can't Make It On Your Own", 5.15, 9.64], ["Ponta de Areia", 4.55, 8.46], ["Forró De Tóquio", 2.82, 5.33], ["Girl From A Pawnshop", 6.74, 12.64], ["Mocidade Alegre 2001", 4.71, 9.16], ["Looking For Love", 6.53, 12.18], ["All My Love", 3.34, 7.66], ["O Bêbado e a Equilibrista", 3.72, 6.97], ["Me Deixas Louca", 3.58, 6.57], ["Stronger Than Death", 5.01, 9.41], ["Turn You Inside-Out", 4.29, 8.01], ["First Time I Met The Blues", 2.34, 4.39], ["Sunshine Of Your Love", 4.21, 7.84], ["The Everlasting Gaze", 4.04, 7.48], ["You Got Me Rocking", 3.60, 6.83], ["Rock Of Ages", 4.14, 7.77], ["Com Açúcar E Com Afeto", 2.92, 5.58], ["Loverman", 7.88, 14.73], ["Ando Meio Desligado", 4.80, 9.05], ["Be Quick Or Be Dead", 3.89, 5.34], ["Same Ol' Situation", 4.24, 7.90], ["RV", 3.72, 6.95], ["Third Stone From The Sun", 6.74, 12.58], ["The Beginning...At Last", 4.53, 8.56], ["The Unforgettable Fire", 4.92, 9.24], ["Naked In The Rain", 4.43, 8.32], ["Angel Of Harlem", 3.84, 7.18], ["Black Mountain Side", 2.21, 4.23], ["Last Chance", 1.87, 3.51], ["Motéis", 3.56, 6.71], ["Aos Leões", 3.91, 7.43], ["Rugas", 2.35, 4.49], ["Been A Son", 2.13, 3.98], ["Elderly Woman Behind The Counter In A Small Town", 3.27, 6.20], ["Rain Song", 8.43, 15.52], ["Comatose", 2.33, 4.36], ["Eu Também Quero Beijar", 3.52, 6.70], ["Faltando Um Pedaço", 4.46, 8.38], ["08 - Charlotte the Harlot", 4.21, 5.79], ["Panama", 3.53, 6.60], ["Give It Away", 4.72, 8.88], ["Cinema Mudo", 3.80, 7.26], ["Cherub Rock", 4.99, 9.33], ["Up An' Atom", 2.99, 5.55], ["Zé Trindade", 4.13, 7.95], ["The Small Hours", 6.72, 12.60], ["Chocolate", 3.24, 6.11], ["Lugar Nenhum", 3.26, 6.17], ["Maria Fumaça", 2.35, 4.52], ["I Need Love", 4.40, 8.30], ["Disc Jockey Jump", 3.22, 5.97], ["Do You Have Other Loves?", 4.92, 9.16], ["Palco (Live)", 3.97, 7.65], ["Dindi (Dindi)", 4.22, 7.77], ["Tucuruvi 2001", 4.80, 9.43], ["You Fool No One", 13.40, 25.15], ["Tanto Tempo", 2.84, 5.31], ["(I Can't Help) Falling In Love With You", 3.46, 6.59], ["Heading Out To The Highway (Live)", 4.61, 8.59], ["Esse Cara", 3.72, 6.88], ["Dead And Bloated", 5.17, 9.70], ["Two Steps Behind [Acoustic Version]", 4.33, 8.13], ["Baião Da Penha", 4.13, 8.00], ["No One Came", 6.43, 12.06], ["Heavy Love Affair", 3.80, 7.17], ["Fascinação", 3.01, 5.53], ["Acrobat", 4.50, 8.42], ["Menino do Rio", 4.38, 8.33], ["Alagados", 5.04, 9.78], ["Girassol", 4.16, 7.94], ["Neworld", 1.76, 3.33], ["Loving The Alien", 5.81, 10.88], ["Flash of The Blade", 4.05, 5.56], ["Dosed", 5.20, 9.76], ["Corazon Espinado", 4.60, 8.78], ["Whole Lotta Love", 5.57, 10.52], ["God Of Thunder", 4.26, 7.92], ["Advance Romance", 11.29, 21.06], ["Starburst", 4.86, 9.32], ["Ela Desapareceu", 4.17, 7.91], ["Açai", 4.52, 8.48], ["Perfect Strangers", 5.35, 9.96], ["Maria Rosa", 3.88, 7.24], ["Invaders", 3.39, 2.72], ["Azul", 4.23, 7.99], ["Lookin' For A Reason", 3.50, 6.61], ["Realce", 4.41, 8.44], ["Blood On The World's Hands", 5.96, 13.65], ["Opus No.1", 3.00, 5.58], ["Throw Away Your Television", 3.74, 7.14], ["Mean Disposition", 4.15, 7.89], ["Carolina Hard-Core Ecstasy", 5.99, 11.19], ["Where Eagles Dare", 4.82, 4.42], ["Tres Reis", 5.07, 11.60], ["House Of Pain Anthem", 2.59, 5.94], ["Vendedor De Caranguejo (Live)", 4.15, 7.97], ["Funk de Bamba", 3.96, 9.06], ["No Way Back", 3.28, 6.12], ["Imperatriz", 5.65, 10.82], ["Atrás Do Trio Elétrico", 2.48, 4.69], ["Quem Me Cobrou?", 2.03, 3.76], ["Se...", 4.77, 8.98], ["Portela", 5.33, 10.22], ["Marvin", 4.41, 8.34], ["Podres Poderes", 4.33, 8.22], ["That's The Way", 5.72, 10.73], ["Slide It In", 3.37, 6.31], ["Breakfast In Bed", 5.29, 9.85], ["Televisão", 4.89, 9.32], ["Can I Play With Madness", 3.52, 4.83], ["Run Silent Run Deep", 4.59, 4.20], ["Life Wasted", 3.91, 7.26], ["Lost in Hollywood", 5.35, 10.05], ["My World", 1.41, 2.64], ["Got That Feeling", 2.35, 4.43], ["Uns Dias", 4.01, 7.56], ["Body Count's In The House", 3.40, 6.40], ["Just Ain't Good Enough", 14.17, 26.22], ["Since I've Been Loving You", 6.94, 12.85], ["Aquarela (Toquinho)", 4.33, 8.09], ["Underwater Love", 3.87, 7.28], ["Adeus", 3.70, 6.92], ["Wainting On A Friend", 5.04, 9.52], ["Alice", 2.77, 5.34], ["Rime of the Ancient Mariner", 13.61, 18.69], ["Scentless Apprentice", 3.52, 6.58], ["Deixa", 3.00, 5.66], ["Fly By Night", 3.37, 6.37], ["No No No", 6.92, 13.01], ["I Was Made For Loving You", 4.52, 8.60], ["Smooth", 4.97, 9.41], ["Hallowed Be Thy Name", 7.86, 7.20], ["Ligia", 4.20, 7.85], ["The Number Of The Beast", 4.89, 11.19], ["Cigano", 5.08, 9.57], ["Tão Seu", 4.06, 7.76], ["Infinite Dreams", 6.15, 8.45], ["World Wide Suicide", 3.49, 6.57], ["Tea For One", 9.45, 17.62], ["Good Times Bad Times", 2.77, 5.21], ["Face In The Sand", 6.52, 14.92], ["É Fogo", 3.25, 6.20], ["Overtime", 2.72, 5.18], ["Heaven Help", 3.17, 5.93], ["Friends", 3.89, 7.34], ["Coração De Estudante", 3.98, 7.44], ["União Da Ilha", 5.52, 10.59], ["Fire Woman", 5.21, 9.72], ["Cocaine", 3.60, 6.81], ["Stone Free", 3.60, 6.68], ["Um Contrato Com Deus", 3.38, 6.33], ["I Want It All", 4.03, 7.51], ["The Battle Rages On", 5.95, 11.09], ["Carolina", 2.72, 5.13], ["Carouselambra", 10.57, 19.89], ["Século XXI", 4.08, 7.67], ["The Meaning Of The Blues/Lament (Alternate Take)", 5.16, 9.45], ["Fear Of The Dark", 7.68, 17.58], ["Angela", 2.83, 5.32], ["Instinto Colectivo", 5.01, 11.47], ["Satisfaction", 3.78, 7.06], ["Get In The Ring", 5.68, 10.62], ["Cathedral", 1.38, 2.53], ["02 - Sanctuary", 3.27, 4.49], ["Quanta (Live)", 5.96, 11.23], ["Snoopy's search-Red baron", 7.60, 14.38], ["It's A Bitter Pill To Swallow", 3.25, 6.18], ["Four Sticks", 4.74, 9.04], ["You've Been A Long Time Coming", 2.29, 4.23], ["Bastille Day", 4.68, 8.84], ["Stone Cold Crazy", 2.30, 4.31], ["Juazeiro", 3.70, 7.01], ["Sweetest Thing", 3.09, 5.87], ["Rubens", 3.53, 6.70], ["Heart-Shaped Box", 4.70, 8.78], ["Beach Sequence", 3.54, 6.61], ["A World Without Heroes", 2.96, 5.56], ["Baião Ambiental [Instrumental]", 2.54, 4.96], ["Um Pro Outro", 3.94, 7.46], ["Meu Mundo Fica Completo (Com Você)", 4.13, 7.94], ["Give Me Novacaine", 3.43, 6.44], ["Leandro De Itaquera 2001", 4.58, 9.01], ["Holier Than Thou", 3.80, 7.12], ["No Good Without You", 2.69, 5.02], ["Black Satin", 5.28, 10.04], ["Brejo Da Cruz", 3.57, 6.93], ["Risoflora", 1.76, 3.37], ["Cropduster", 3.86, 7.24], ["Somebody To Love", 4.96, 9.20], ["Marquis In Spades", 3.21, 6.01], ["Falamansa Song", 3.95, 7.55], ["Acelerou", 4.73, 8.96], ["Danny Boy, Danny Boy", 1.91, 4.37], ["No Fundo Do Quintal Da Escola", 2.96, 5.57], ["Shamrocks And Shenanigans", 3.64, 8.33], ["Heartland", 5.06, 9.41], ["The pleasant pheasant", 5.30, 10.14], ["Midnight From The Inside Out", 4.78, 9.00], ["Chão De Estrelas", 4.75, 9.00], ["Hooks In You", 4.13, 3.78], ["The Girl From Ipanema", 3.23, 6.11], ["Something Stupid", 2.64, 4.97], ["Aquilo", 4.10, 7.79], ["Green River", 2.57, 4.87], ["Midnight", 4.93, 9.25], ["Um Homem Chamado Alfredo", 2.53, 4.75], ["Let's Spend The Night Together", 3.62, 6.81], ["Fotografia", 2.15, 4.00], ["World Leader Pretend", 4.33, 8.14], ["Poconé", 5.31, 10.27], ["Soon Forgotten", 4.80, 8.97], ["When You Gonna Learn (Digeridoo)", 3.84, 7.30], ["Ito Okashi", 3.42, 6.27], ["The Crystal Ship", 2.58, 4.82], ["Baby", 2.95, 5.53], ["Battery", 5.21, 9.76], ["Sister Awake", 5.73, 10.78], ["I Don't Live Today", 3.92, 7.31], ["Mysterious Ways", 4.06, 7.69], ["Victim Of Change (Live)", 7.18, 13.42], ["Um Amor, Um Lugar", 3.08, 5.81], ["Copacabana (Live)", 4.83, 9.23], ["Burn Away", 4.97, 9.23], ["Casa no Campo", 2.85, 5.28], ["Mellowship Slinky In B Major", 4.00, 7.60], ["Miracle Drug", 3.99, 7.40], ["Mistério da Raça", 3.07, 5.90], ["Ain't Talkin' 'Bout Love", 3.83, 7.26], ["FX", 1.72, 3.18], ["Letterbomb", 4.10, 7.61], ["Temptation", 3.42, 6.40], ["Assum Preto", 3.33, 6.32], ["Departure", 3.49, 6.50], ["Mystic Man", 5.89, 11.26], ["Strange Kind Of Woman", 4.12, 7.70], ["On A Plain", 3.27, 6.09], ["Top O' The Morning To Ya", 3.61, 8.27], ["Ela Disse Adeus", 3.77, 7.26], ["Música De Trabalho", 4.34, 8.19], ["Balada Da Paula", 5.38, 10.11], ["Put You Down", 3.27, 6.12], ["Samba Em Prelúdio", 3.54, 6.60], ["Sun And Steel", 3.44, 3.15], ["Red Light", 3.76, 7.11], ["Dazed And Confused", 18.61, 34.38], ["Mistreated", 12.64, 23.46], ["O Dia Em Que A Terra Parou", 4.36, 8.19], ["Die With Your Boots On", 5.43, 4.97], ["Tuesday's Gone", 9.10, 17.07], ["O Segredo Do Universo", 3.21, 6.02], ["Ghost", 3.25, 6.09], ["Firmamento", 3.76, 7.16], ["Somebody Stole My Guitar", 4.16, 7.80], ["Aeroplane Flies High", 7.89, 14.69], ["Sliver", 1.94, 3.61], ["Meu Caro Amigo", 4.34, 8.37], ["L.A. Is My Lady", 3.22, 6.08], ["Whatsername", 4.21, 7.86], ["King Of Pain", 5.01, 9.42], ["Hip Hop Rio", 2.53, 4.76], ["Salgueiro", 5.10, 9.82], ["Gates Of Urizen", 4.42, 8.23], ["Call Me At Cleo´s", 3.94, 7.55], ["Don't Stand so Close to Me", 4.02, 7.59], ["A Paz", 4.88, 9.15], ["Crazy Train", 5.38, 10.03], ["Smoke On The Water", 7.74, 14.48], ["You've Got It", 3.92, 7.36], ["Slither", 5.22, 9.73], ["Metrô. Linha 743", 2.91, 5.57], ["Charles Anjo 45", 6.49, 12.42], ["1979", 4.39, 8.32], ["Hard Luck Woman", 3.60, 6.78], ["Iron Maiden", 8.24, 11.32], ["I Want To Break Free", 4.32, 8.16], ["Pseudo Silk Kimono", 2.25, 4.13], ["Freewheel Burning", 4.43, 8.31], ["Love Bites", 5.78, 10.78], ["1/2 Full", 4.18, 7.82], ["Ponto De Interrogação", 3.02, 5.67], ["Cry For Love", 4.88, 9.12], ["Riviera Paradise", 8.81, 16.43], ["O Erê", 3.45, 6.63], ["May This Be Love", 3.19, 5.95], ["Space Truckin'", 4.55, 8.56], ["Shamrocks And Shenanigans (Boom Shalock Lock Boom/Butch Vig Mix)", 3.95, 9.04], ["Stuck In A Moment You Can't Get Out Of", 4.54, 8.58], ["Plaster Caster", 3.46, 6.49]],
+total: [[2328.60]],
+artists: [["A Cor Do Som"], ["Aaron Copland & London Symphony Orchestra"], ["Aaron Goldberg"], ["AC/DC"], ["Academy of St. Martin in the Fields & Sir Neville Marriner"], ["Academy of St. Martin in the Fields Chamber Ensemble & Sir Neville Marriner"], ["Academy of St. Martin in the Fields, John Birch, Sir Neville Marriner & Sylvia McNair"], ["Academy of St. Martin in the Fields, Sir Neville Marriner & Thurston Dart"], ["Academy of St. Martin in the Fields, Sir Neville Marriner & William Bennett"], ["Accept"], ["Adrian Leaper & Doreen de Feis"], ["Aerosmith"]],
+};
+
+const QUERIES = [
+  { name: "Revenue by genre", note: "text + number → bar",
+    sql: "SELECT g.name AS genre, sum(il.unit_price * il.quantity)::numeric(10,2) AS revenue\nFROM invoice_line il JOIN track t USING (track_id) JOIN genre g USING (genre_id)\nGROUP BY 1 ORDER BY 2 DESC;",
+    columns: [["genre", "varchar"], ["revenue", "numeric"]], rows: DATA.genre },
+  { name: "Revenue by month", note: "date + number → line",
+    sql: "SELECT date_trunc('month', invoice_date)::date AS month, sum(total)::numeric(10,2) AS revenue\nFROM invoice GROUP BY 1 ORDER BY 1;",
+    columns: [["month", "date"], ["revenue", "numeric"]], rows: DATA.monthly },
+  { name: "Revenue by quarter, per country", note: "date + text + number → a line per country",
+    sql: "SELECT date_trunc('quarter', invoice_date)::date AS quarter, billing_country AS country,\n       sum(total)::numeric(10,2) AS revenue\nFROM invoice WHERE billing_country IN ('USA', 'Canada', 'France')\nGROUP BY 1, 2 ORDER BY 1, 2;",
+    columns: [["quarter", "date"], ["country", "varchar"], ["revenue", "numeric"]], rows: DATA.bycountry },
+  { name: "Track length vs file size", note: "two numbers, many rows → scatter",
+    sql: "SELECT name, round(milliseconds / 60000.0, 2) AS minutes, round(bytes / 1048576.0, 2) AS megabytes\nFROM track WHERE media_type_id = 1 ORDER BY random() LIMIT 600;",
+    columns: [["name", "varchar"], ["minutes", "numeric"], ["megabytes", "numeric"]], rows: DATA.tracks },
+  { name: "Total revenue", note: "one value → just the number",
+    sql: "SELECT sum(total)::numeric(10,2) AS revenue FROM invoice;",
+    columns: [["revenue", "numeric"]], rows: DATA.total },
+  { name: "Artists", note: "no number → no chart",
+    sql: "SELECT name FROM artist ORDER BY name LIMIT 12;",
+    columns: [["name", "varchar"]], rows: DATA.artists },
+];
+
+// ---- The part that becomes chartSpec.ts in the app: types in, spec out. ----
+const kind = (t) =>
+  /^(int|smallint|bigint|numeric|decimal|real|double|float|money|serial)/i.test(t) ? "number"
+  : /^(date|timestamp)/i.test(t) ? "time" : "text";
+
+function pick(columns) {
+  const k = columns.map(([, t]) => kind(t));
+  const idx = (w) => k.flatMap((x, i) => (x === w ? [i] : []));
+  const [nums, times, texts] = [idx("number"), idx("time"), idx("text")];
+  const name = (i) => columns[i][0];
+  if (!nums.length) return { form: "table", why: "Nothing to chart: there's no number column." };
+  if (columns.length === 1) return { form: "value", y: nums[0], why: `One number, so it's shown as a number.` };
+  if (times.length)
+    return { form: "line", x: times[0], y: nums[0], series: texts[0] ?? null,
+      why: `<b>Line</b>: ${name(times[0])} is a ${columns[times[0]][1]}, so time runs along the bottom` +
+        (texts.length ? `, one line per ${name(texts[0])}.` : ".") };
+  if (nums.length >= 2)
+    return { form: "scatter", x: nums[0], y: nums[1], label: texts[0] ?? null,
+      why: `<b>Scatter</b>: two numbers, ${name(nums[0])} against ${name(nums[1])}` + (texts.length ? `; hover a point for its ${name(texts[0])}.` : ".") };
+  return { form: "bar", x: texts[0], y: nums[0],
+    why: `<b>Bar</b>: one ${name(nums[0])} per ${name(texts[0])}, in the order the query returned them.` };
+}
+
+function allowed(form, columns) {
+  const k = columns.map(([, t]) => kind(t));
+  const n = k.filter((x) => x === "number").length;
+  if (form === "table") return true;
+  if (form === "line") return n >= 1 && k.some((x) => x === "time" || x === "number") && columns.length > 1;
+  if (form === "bar") return n >= 1 && columns.length > 1;
+  if (form === "scatter") return n >= 2;
+  return false;
+}
+
+// ---- rendering (plain SVG, no chart library) ----
+const $ = (id) => document.getElementById(id);
+const fmt = (v) => Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 });
+const fmtDate = (d) => new Date(d).toLocaleDateString(undefined, { month: "short", year: "numeric" });
+const SERIES = ["var(--s1)", "var(--s2)", "var(--s3)"];
+const tip = $("tip");
+function showTip(e, html) { tip.innerHTML = html; tip.style.display = "block";
+  const x = Math.min(e.clientX + 14, innerWidth - tip.offsetWidth - 8); tip.style.left = x + "px"; tip.style.top = e.clientY + 14 + "px"; }
+const hideTip = () => (tip.style.display = "none");
+
+function ticks(max, count = 5) {
+  const raw = max / count, p = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * p).find((s) => s >= raw);
+  const out = []; for (let v = 0; v <= max + step * 0.001; v += step) out.push(v);
+  if (out.at(-1) < max) out.push(out.at(-1) + step);
+  return out;
+}
+const el = (tag, attrs = {}, text) => { const n = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [a, v] of Object.entries(attrs)) n.setAttribute(a, v); if (text != null) n.textContent = text; return n; };
+
+let state = { q: 0, spec: null };
+
+function render() {
+  const Q = QUERIES[state.q], s = state.spec, stage = $("stage");
+  stage.innerHTML = ""; hideTip();
+  $("sql").textContent = Q.sql;
+  $("why").innerHTML = `<span class="muted">${s.why}</span>`;
+  $("spec").textContent = JSON.stringify({ sql: Q.sql.replace(/\s+/g, " "), chart: specOut(Q, s) }, null, 2);
+  renderForms(Q); renderPickers(Q);
+  ({ line: drawLine, bar: drawBar, scatter: drawScatter, value: drawValue, table: drawTable })[s.form](stage, Q, s);
+}
+function specOut(Q, s) {
+  const n = (i) => (i == null ? undefined : Q.columns[i][0]);
+  return { form: s.form, x: n(s.x), y: n(s.y), series: n(s.series), label: n(s.label) };
+}
+
+function renderForms(Q) {
+  const f = $("forms"); f.innerHTML = "";
+  for (const form of ["line", "bar", "scatter", "table"]) {
+    const b = document.createElement("button");
+    b.textContent = form[0].toUpperCase() + form.slice(1);
+    b.className = state.spec.form === form || (form === "table" && state.spec.form === "value") ? "on" : "";
+    b.disabled = !allowed(form, Q.columns);
+    if (b.disabled) b.title = form === "scatter" ? "Needs two number columns" : "Needs a number column";
+    b.onclick = () => { state.spec = reshape(Q, form); render(); };
+    f.append(b);
+  }
+}
+// Switching form keeps the columns the reader chose where they still fit.
+function reshape(Q, form) {
+  const k = Q.columns.map(([, t]) => kind(t)), s = state.spec;
+  const nums = k.flatMap((x, i) => (x === "number" ? [i] : []));
+  const other = k.findIndex((x) => x !== "number");
+  if (form === "table") return { ...s, form, why: "The rows as they came back." };
+  if (form === "scatter") return { form, x: nums[0], y: nums[1], label: k.indexOf("text") >= 0 ? k.indexOf("text") : null, why: `<b>Scatter</b>, chosen by you.` };
+  const x = s.x != null && s.x !== s.y ? s.x : other >= 0 ? other : nums[0];
+  const y = nums.find((i) => i !== x) ?? nums[0];
+  return { form, x, y, series: form === "line" ? s.series ?? null : null, why: `<b>${form[0].toUpperCase() + form.slice(1)}</b>, chosen by you.` };
+}
+
+function renderPickers(Q) {
+  const p = $("pickers"), s = state.spec; p.innerHTML = "";
+  if (!["line", "bar", "scatter"].includes(s.form)) return;
+  const sel = (label, key, filter, none) => {
+    const w = document.createElement("label"); w.textContent = label + " ";
+    const se = document.createElement("select");
+    if (none) se.append(new Option("—", ""));
+    Q.columns.forEach(([n, t], i) => filter(kind(t)) && se.append(new Option(n, i)));
+    se.value = s[key] ?? ""; se.onchange = () => { s[key] = se.value === "" ? null : +se.value; s.why = s.why.replace(/:.*|, chosen.*/, ", chosen by you."); render(); };
+    w.append(se); p.append(w, " ");
+  };
+  sel("x", "x", (k) => s.form !== "scatter" || k === "number");
+  sel("y", "y", (k) => k === "number");
+  if (s.form === "line") sel("per", "series", (k) => k === "text", true);
+}
+
+function frame(stage, h) {
+  const W = Math.max(480, stage.clientWidth - 40);
+  const svg = el("svg", { width: W, height: h }); stage.append(svg); return [svg, W];
+}
+
+function drawLine(stage, Q, s) {
+  const isTime = kind(Q.columns[s.x][1]) === "time";
+  const xv = (r) => (isTime ? +new Date(r[s.x]) : +r[s.x]);
+  // Group into series; more than three folds to the three largest.
+  let groups = new Map();
+  for (const r of Q.rows) { const key = s.series == null ? Q.columns[s.y][0] : r[s.series]; (groups.get(key) ?? groups.set(key, []).get(key)).push(r); }
+  let names = [...groups.keys()], folded = 0;
+  if (names.length > 3) { const tot = (n) => groups.get(n).reduce((a, r) => a + +r[s.y], 0);
+    const keep = [...names].sort((a, b) => tot(b) - tot(a)).slice(0, 3); folded = names.length - 3; names = names.filter((n) => keep.includes(n)); }
+  const multi = s.series != null;
+  const title = document.createElement("div"); title.className = "title";
+  title.textContent = `${Q.columns[s.y][0]} by ${Q.columns[s.x][0]}` + (multi ? `, per ${Q.columns[s.series][0]}` : ""); stage.append(title);
+  if (multi) { const lg = document.createElement("div"); lg.className = "legend";
+    names.forEach((n, i) => { const sp = document.createElement("span"); sp.style.setProperty("--c", SERIES[i]); sp.textContent = n; lg.append(sp); });
+    if (folded) lg.append(Object.assign(document.createElement("span"), { className: "muted", textContent: `${folded} more in the table`, style: "--c: transparent" }));
+    stage.append(lg); }
+  const H = 340, m = { l: 56, r: multi ? 70 : 16, t: 10, b: 28 };
+  const [svg, W] = frame(stage, H);
+  const all = names.flatMap((n) => groups.get(n));
+  const xs = all.map(xv), x0 = Math.min(...xs), x1 = Math.max(...xs);
+  const yt = ticks(Math.max(...all.map((r) => +r[s.y])));
+  const X = (v) => m.l + ((v - x0) / (x1 - x0 || 1)) * (W - m.l - m.r);
+  const Y = (v) => H - m.b - (v / yt.at(-1)) * (H - m.t - m.b);
+  for (const t of yt) { svg.append(el("line", { x1: m.l, x2: W - m.r, y1: Y(t), y2: Y(t), stroke: t ? "var(--grid)" : "var(--line)" }));
+    svg.append(el("text", { x: m.l - 8, y: Y(t) + 4, "text-anchor": "end" }, fmt(t))); }
+  const uniqX = [...new Set(xs)].sort((a, b) => a - b), every = Math.ceil(uniqX.length / 8);
+  uniqX.forEach((v, i) => i % every === 0 && svg.append(el("text", { x: X(v), y: H - 8, "text-anchor": "middle" }, isTime ? fmtDate(v) : fmt(v))));
+  const ends = [];
+  names.forEach((n, i) => {
+    const pts = groups.get(n).map((r) => [X(xv(r)), Y(+r[s.y])]);
+    svg.append(el("path", { d: "M" + pts.map((p) => p.join(",")).join("L"), fill: "none", stroke: multi ? SERIES[i] : "var(--mark)", "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }));
+    if (multi) ends.push({ n, x: pts.at(-1)[0] + 8, y: pts.at(-1)[1] + 4 });
+  });
+  // End labels: nudged apart so two lines ending close together stay readable.
+  ends.sort((a, b) => a.y - b.y).forEach((l, i, a) => { if (i && l.y - a[i - 1].y < 13) l.y = a[i - 1].y + 13; svg.append(el("text", { x: l.x, y: l.y, class: "label" }, l.n)); });
+  // Crosshair: nearest x, every series at it.
+  const cross = el("line", { y1: m.t, y2: H - m.b, stroke: "var(--muted)", "stroke-dasharray": "2 3", visibility: "hidden" }); svg.append(cross);
+  const dots = names.map((_, i) => { const d = el("circle", { r: 4.5, fill: multi ? SERIES[i] : "var(--accent)", stroke: "var(--surface)", "stroke-width": 2, visibility: "hidden" }); svg.append(d); return d; });
+  const hit = el("rect", { x: m.l, y: m.t, width: W - m.l - m.r, height: H - m.t - m.b, fill: "transparent" }); svg.append(hit);
+  hit.onmousemove = (e) => {
+    const px = e.offsetX, v = uniqX.reduce((a, b) => (Math.abs(X(b) - px) < Math.abs(X(a) - px) ? b : a));
+    cross.setAttribute("x1", X(v)); cross.setAttribute("x2", X(v)); cross.setAttribute("visibility", "visible");
+    let html = `<div class="k">${isTime ? fmtDate(v) : fmt(v)}</div>`;
+    names.forEach((n, i) => { const r = groups.get(n).find((r) => xv(r) === v);
+      dots[i].setAttribute("visibility", r ? "visible" : "hidden");
+      if (r) { dots[i].setAttribute("cx", X(v)); dots[i].setAttribute("cy", Y(+r[s.y]));
+        html += `<div><i style="--c:${multi ? SERIES[i] : "var(--accent)"}"></i>${multi ? n + " " : ""}<b>${fmt(r[s.y])}</b></div>`; } });
+    showTip(e, html);
+  };
+  hit.onmouseleave = () => { hideTip(); cross.setAttribute("visibility", "hidden"); dots.forEach((d) => d.setAttribute("visibility", "hidden")); };
+}
+
+function drawBar(stage, Q, s) {
+  const CAP = 40, rows = Q.rows.slice(0, CAP);
+  const title = document.createElement("div"); title.className = "title";
+  title.textContent = `${Q.columns[s.y][0]} by ${Q.columns[s.x][0]}`; stage.append(title);
+  if (Q.rows.length > CAP) stage.append(Object.assign(document.createElement("div"), { className: "muted", textContent: `The first ${CAP} of ${Q.rows.length} rows; the rest are in the table.` }));
+  const band = 22, m = { l: 150, r: 60, t: 22, b: 6 }, H = m.t + rows.length * band + m.b;
+  const [svg, W] = frame(stage, H);
+  const xt = ticks(Math.max(...rows.map((r) => +r[s.y])));
+  const X = (v) => m.l + (v / xt.at(-1)) * (W - m.l - m.r);
+  for (const t of xt) { svg.append(el("line", { x1: X(t), x2: X(t), y1: m.t - 4, y2: H - m.b, stroke: t ? "var(--grid)" : "var(--line)" }));
+    svg.append(el("text", { x: X(t), y: 12, "text-anchor": "middle" }, fmt(t))); }
+  rows.forEach((r, i) => {
+    const y = m.t + i * band + 2, h = band - 4, w = Math.max(1, X(+r[s.y]) - m.l), rad = Math.min(4, w);
+    const label = String(r[s.x] ?? "NULL");
+    svg.append(el("text", { x: m.l - 8, y: y + h / 2 + 4, "text-anchor": "end", class: "label" }, label.length > 22 ? label.slice(0, 21) + "…" : label));
+    // Square at the baseline, rounded at the data end.
+    const bar = el("path", { d: `M${m.l},${y}h${w - rad}a${rad},${rad} 0 0 1 ${rad},${rad}v${h - 2 * rad}a${rad},${rad} 0 0 1 -${rad},${rad}h-${w - rad}z`, fill: "var(--mark)" });
+    const val = el("text", { x: m.l + w + 6, y: y + h / 2 + 4, visibility: i === 0 ? "visible" : "hidden" }, fmt(r[s.y]));
+    const hit = el("rect", { x: 0, y: y - 2, width: W, height: band, fill: "transparent" });
+    hit.onmousemove = (e) => { bar.setAttribute("fill", "var(--accent)"); val.setAttribute("visibility", "visible");
+      showTip(e, `<div class="k">${label}</div><b>${fmt(r[s.y])}</b> <span class="k">${Q.columns[s.y][0]}</span>`); };
+    hit.onmouseleave = () => { bar.setAttribute("fill", "var(--mark)"); if (i) val.setAttribute("visibility", "hidden"); hideTip(); };
+    svg.append(bar, val, hit);
+  });
+}
+
+function drawScatter(stage, Q, s) {
+  const title = document.createElement("div"); title.className = "title";
+  title.textContent = `${Q.columns[s.y][0]} against ${Q.columns[s.x][0]}`; stage.append(title);
+  const H = 380, m = { l: 56, r: 16, t: 10, b: 36 };
+  const [svg, W] = frame(stage, H);
+  const xt = ticks(Math.max(...Q.rows.map((r) => +r[s.x]))), yt = ticks(Math.max(...Q.rows.map((r) => +r[s.y])));
+  const X = (v) => m.l + (v / xt.at(-1)) * (W - m.l - m.r), Y = (v) => H - m.b - (v / yt.at(-1)) * (H - m.t - m.b);
+  for (const t of yt) { svg.append(el("line", { x1: m.l, x2: W - m.r, y1: Y(t), y2: Y(t), stroke: t ? "var(--grid)" : "var(--line)" }));
+    svg.append(el("text", { x: m.l - 8, y: Y(t) + 4, "text-anchor": "end" }, fmt(t))); }
+  for (const t of xt) svg.append(el("text", { x: X(t), y: H - 18, "text-anchor": "middle" }, fmt(t)));
+  svg.append(el("text", { x: W - m.r, y: H - 2, "text-anchor": "end" }, Q.columns[s.x][0] + " →"));
+  svg.append(el("text", { x: m.l + 8, y: m.t + 12, "text-anchor": "start" }, "↑ " + Q.columns[s.y][0]));
+  const pts = Q.rows.map((r) => ({ r, x: X(+r[s.x]), y: Y(+r[s.y]) }));
+  for (const p of pts) svg.append(el("circle", { cx: p.x, cy: p.y, r: 4, fill: "var(--mark)", "fill-opacity": 0.55, stroke: "var(--surface)", "stroke-width": 1 }));
+  const hot = el("circle", { r: 5.5, fill: "var(--accent)", stroke: "var(--surface)", "stroke-width": 2, visibility: "hidden" }); svg.append(hot);
+  const hit = el("rect", { x: m.l, y: m.t, width: W - m.l - m.r, height: H - m.t - m.b, fill: "transparent" }); svg.append(hit);
+  hit.onmousemove = (e) => {
+    let best = null, bd = 14 ** 2;
+    for (const p of pts) { const d = (p.x - e.offsetX) ** 2 + (p.y - e.offsetY) ** 2; if (d < bd) (bd = d), (best = p); }
+    if (!best) { hot.setAttribute("visibility", "hidden"); return hideTip(); }
+    hot.setAttribute("cx", best.x); hot.setAttribute("cy", best.y); hot.setAttribute("visibility", "visible");
+    showTip(e, (s.label != null ? `<div>${best.r[s.label]}</div>` : "") +
+      `<div><span class="k">${Q.columns[s.x][0]}</span> <b>${fmt(best.r[s.x])}</b></div><div><span class="k">${Q.columns[s.y][0]}</span> <b>${fmt(best.r[s.y])}</b></div>`);
+  };
+  hit.onmouseleave = () => { hot.setAttribute("visibility", "hidden"); hideTip(); };
+}
+
+function drawValue(stage, Q, s) {
+  stage.append(Object.assign(document.createElement("div"), { className: "hero", textContent: fmt(Q.rows[0][s.y]) }));
+  stage.append(Object.assign(document.createElement("div"), { className: "muted", textContent: Q.columns[s.y][0] }));
+}
+
+function drawTable(stage, Q) {
+  const t = document.createElement("table");
+  t.innerHTML = "<tr>" + Q.columns.map(([n]) => `<th>${n}</th>`).join("") + "</tr>" +
+    Q.rows.slice(0, 200).map((r) => "<tr>" + r.map((v, i) => `<td class="${kind(Q.columns[i][1]) === "number" ? "num" : ""}">${v ?? "NULL"}</td>`).join("") + "</tr>").join("");
+  stage.append(t);
+}
+
+function select(i) {
+  state = { q: i, spec: pick(QUERIES[i].columns) };
+  $("list").querySelectorAll(".q").forEach((b, j) => b.classList.toggle("active", j === i));
+  render();
+}
+QUERIES.forEach((Q, i) => { const b = document.createElement("button"); b.className = "q";
+  b.innerHTML = `${Q.name}<small>${Q.note}</small>`; b.onclick = () => select(i); $("list").append(b); });
+for (const th of ["Light", "Dark"]) { const b = document.createElement("button"); b.textContent = th;
+  b.onclick = () => { document.documentElement.dataset.theme = th.toLowerCase(); $("theme").querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b)); };
+  $("theme").append(b); }
+$("theme").firstChild.classList.add("on");
+addEventListener("resize", render);
+select(0);
+</script>
+</body>
+</html>
