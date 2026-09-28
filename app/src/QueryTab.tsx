@@ -14,11 +14,13 @@ import {
   type QueryResult,
   type Snippet,
 } from "./api";
+import { lazyComponent } from "./lazy";
 import { PlanView } from "./PlanView";
 import { splitStatements, statementAt, type Statement } from "./statements";
 import type { EditorSnapshot } from "./SqlEditor";
 
 const SqlEditor = lazy(() => import("./SqlEditor"));
+const ChartView = lazyComponent(() => import("./ChartView").then((m) => m.default));
 
 type Props = {
   connectionId: string;
@@ -42,7 +44,7 @@ export function QueryTab({ connectionId, engine, schema, sql, onSqlChange, visib
   const [ran, setRan] = useState<{ count: number; ms: number } | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const [plan, setPlan] = useState<{ sql: string; plan: Plan; previous: Plan | null } | null>(null);
-  const [view, setView] = useState<"results" | "plan">("results");
+  const [view, setView] = useState<"results" | "chart" | "plan">("results");
   const [history, setHistory] = useState<AuditEntry[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [panel, setPanel] = useState<"history" | "snippets">("history");
@@ -125,7 +127,8 @@ export function QueryTab({ connectionId, engine, schema, sql, onSqlChange, visib
 
   async function run(mode: "statement" | "all", at: EditorSnapshot) {
     if (!session || running) return;
-    setView("results");
+    // A re-run stays on the chart; only the plan belongs to the statement explained.
+    setView((v) => (v === "plan" ? "results" : v));
     let statements: Statement[];
     if (at.from !== at.to) {
       // A selection runs exactly what's selected, split into statements.
@@ -291,18 +294,25 @@ export function QueryTab({ connectionId, engine, schema, sql, onSqlChange, visib
           </div>
 
           {failure && <p className="error">{failure.message}</p>}
-          {plan && result && (
+          {result && result.columns.length > 0 && (
             <div className="segmented result-switch">
               <button className={view === "results" ? "on" : ""} onClick={() => setView("results")}>
                 Results
               </button>
-              <button className={view === "plan" ? "on" : ""} onClick={() => setView("plan")}>
-                Plan
+              <button className={view === "chart" ? "on" : ""} onClick={() => setView("chart")}>
+                Chart
               </button>
+              {plan && (
+                <button className={view === "plan" ? "on" : ""} onClick={() => setView("plan")}>
+                  Plan
+                </button>
+              )}
             </div>
           )}
           {view === "plan" && plan ? (
             <PlanView plan={plan.plan} previous={plan.previous} engine={engine} />
+          ) : view === "chart" && result && result.columns.length > 0 ? (
+            <ChartView columns={result.columns} rows={result.rows} />
           ) : (
             <>
           {result && !failure && result.truncated && (

@@ -224,7 +224,7 @@ ranges + copy as, ⌘K, snippets, dark mode, SSL verify modes.
    drop). `links.json` in the app folder maps each workspace to its file, with
    a macOS bookmark so a moved or renamed folder is still found. Unlinked
    layouts live in the app folder. A stale or missing file is said once.
-4. **Next: charts on results** — bar/line/scatter chosen from column types, as
+4. **Charts on results** (built 2026-09-28; MCP left) — bar/line/scatter chosen from column types, as
    a view of a query result (SQL + spec, never an image); then the same from
    an agent through MCP. No dashboards, no chart library, no styling options.
 

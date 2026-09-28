@@ -116,6 +116,13 @@ rolled back) with findings and plan tree, SQLite query plan, Insights.
   tab (⇧⌘D) with drag, zoom, Arrange, Export DBML…; `links.json` + macOS
   bookmarks (`app/src-tauri/src/bookmark.rs`, tested across a folder rename);
   layouts next to the DBML or in `layouts/`. Not yet seen on screen.
+- **Charts on results (v0.2):** query tabs switch Results | Chart | Plan.
+  `chartSpec.ts` reads column kinds from the values (results carry no types),
+  picks line / bar / scatter / a single number, and says why; form and
+  columns can be changed by hand and survive a re-run with the same columns.
+  Plain SVG, lazy chunk (12 KB), 3 series max (colour-blind safe in both
+  themes), 40 bars max. Not yet: charts through MCP, saving a chart with a
+  snippet. Mock-up with Chinook data: `design/charts-demo.html`.
 - **Speed:** views and dialogs lazy (main JS 262 KB), cold start 267–284 ms,
   scroll 100k rows at 60 fps with 0% dropped (DOM grid is enough; no canvas).
 
