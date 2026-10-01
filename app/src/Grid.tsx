@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ResizeHandle } from "./resize";
 import { toggleRowPane, useRowPane } from "./rowPane";
+import { clampColumnWidth, fitColumnWidth, preview } from "./columnWidth";
 import { api, isNumeric, plural, type ExportFormat, type RelationRef, type ResultColumn, type Rows, type Sort } from "./api";
 
 const ROW_HEIGHT = 26;
@@ -111,7 +112,61 @@ export function Grid(props: Props) {
     setPeek(null);
   }
 
-  const widths = useMemo(() => columnWidths(columns, sample), [columns, sample]);
+  const autoWidths = useMemo(() => columnWidths(columns, sample), [columns, sample]);
+  // Widths set by hand (dragged, or fitted by double-click), kept while the columns stay the same.
+  const columnsKey = columns.map((c) => c.name).join("\u0000");
+  const [manual, setManual] = useState<{ key: string; widths: Record<number, number> }>({ key: "", widths: {} });
+  const widths = manual.key === columnsKey ? autoWidths.map((w, i) => manual.widths[i] ?? w) : autoWidths;
+  // A drag that ends over the header would otherwise click it and sort.
+  const justResized = useRef(false);
+
+  function setWidth(col: number, width: number) {
+    setManual((m) => ({ key: columnsKey, widths: { ...(m.key === columnsKey ? m.widths : {}), [col]: width } }));
+  }
+
+  function startResize(e: React.PointerEvent<HTMLDivElement>, col: number) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const [x0, w0] = [e.clientX, widths[col]];
+    document.body.classList.add("resizing");
+    const move = (m: PointerEvent) => setWidth(col, clampColumnWidth(w0 + m.clientX - x0));
+    const up = () => {
+      document.body.classList.remove("resizing");
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      justResized.current = true;
+      window.setTimeout(() => (justResized.current = false));
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  }
+
+  /** Double-click on the edge: as wide as the header and the loaded values need. */
+  function fitColumn(col: number) {
+    const head = headerCells.current[col];
+    if (!head || !scroller.current) return;
+    const ctx = document.createElement("canvas").getContext("2d");
+    if (!ctx) return;
+    const style = getComputedStyle(scroller.current);
+    ctx.font = `${style.fontSize} ${style.fontFamily}`;
+    // The header's parts at their natural width, plus its padding and the gaps between them.
+    const parts = Array.from(head.children).filter((el) => !el.classList.contains("col-resize")) as HTMLElement[];
+    const header = parts.reduce((w, el) => w + el.scrollWidth, 0) + (parts.length - 1) * 6 + 21;
+    const values: (string | null)[] = [];
+    const seen = new Set<number>();
+    const add = (i: number) => {
+      if (seen.has(i) || i >= rowCount) return;
+      seen.add(i);
+      const r = row(i);
+      if (r) values.push(shown(r, i, col));
+    };
+    for (let i = 0; i < Math.min(sample.length, 1000); i++) add(i);
+    for (const item of items) add(item.index);
+    const arrow = link?.has(col) ? 18 : 0;
+    setWidth(col, fitColumnWidth(header, values, (t) => ctx.measureText(t).width + arrow));
+  }
+
   const totalWidth = widths.reduce((a, b) => a + b, 0) + gutterWidth(rowOffset + rowCount);
 
   const virtualizer = useVirtualizer({
@@ -282,7 +337,7 @@ export function Grid(props: Props) {
   });
 
   function clickHeader(name: string) {
-    if (!onSort) return;
+    if (!onSort || justResized.current) return;
     if (sort?.column !== name) onSort({ column: name, descending: false });
     else if (!sort.descending) onSort({ column: name, descending: true });
     else onSort(null);
@@ -325,6 +380,13 @@ export function Grid(props: Props) {
                     </svg>
                   </button>
                 )}
+                <div
+                  className="col-resize"
+                  onPointerDown={(e) => startResize(e, i)}
+                  onClick={(e) => e.stopPropagation()}
+                  onDoubleClick={(e) => (e.stopPropagation(), fitColumn(i))}
+                  title="Drag to resize; double-click to fit"
+                />
               </div>
             ))}
           </div>
@@ -654,13 +716,6 @@ function cellClass(column: ResultColumn, value: string | null, selected: boolean
   else if (isNumeric(column.data_type)) classes.push("num");
   if (selected) classes.push("selected");
   return classes.join(" ");
-}
-
-/** First line only, capped — the full value lives in the detail panel. */
-function preview(value: string) {
-  const line = value.length > 300 ? value.slice(0, 300) : value;
-  const nl = line.indexOf("\n");
-  return nl === -1 ? line : `${line.slice(0, nl)} ⏎`;
 }
 
 /** Wide enough for the largest row number. */

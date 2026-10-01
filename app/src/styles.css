@@ -206,6 +206,9 @@ select:focus, input:focus, textarea:focus { border-color: var(--accent); }
 }
 .grid-head .grid-cell { font-weight: 600; display: flex; gap: 6px; align-items: baseline; border-bottom: 0; }
 .grid-head .sortable:hover { background: var(--hover); }
+.grid-head .grid-cell { position: relative; }
+.col-resize { position: absolute; top: 0; right: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 1; }
+.col-resize:hover, body.resizing .col-resize:active { background: linear-gradient(90deg, transparent 4px, var(--accent) 4px 5px, transparent 5px); }
 .col-name { overflow: hidden; text-overflow: ellipsis; }
 .col-type { color: var(--muted); font-weight: 400; font-size: 10px; margin-left: auto; overflow: hidden; text-overflow: ellipsis; }
 .sort-mark { color: var(--accent); }
