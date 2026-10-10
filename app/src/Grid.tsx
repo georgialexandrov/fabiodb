@@ -86,6 +86,8 @@ export function Grid(props: Props) {
   // `selected` is the active cell; with `anchor` it spans a rectangle (shift-click, shift-arrows).
   const [selected, setSelected] = useState<Cell | null>(null);
   const [anchor, setAnchor] = useState<Cell | null>(null);
+  // Rows picked one by one (⌘-click on row numbers); while set, it is the selection.
+  const [picked, setPicked] = useState<Set<number> | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   // The selected row, one field per line, beside the grid (⌘I). One setting for all grids.
   const rowPane = useRowPane();
@@ -192,6 +194,7 @@ export function Grid(props: Props) {
   useEffect(() => {
     setSelected(null);
     setAnchor(null);
+    setPicked(null);
     setEditing(null);
   }, [columns]);
 
@@ -202,15 +205,57 @@ export function Grid(props: Props) {
     right: Math.max(selected.col, (anchor ?? selected).col),
   };
   const inRange = (r: number, c: number) =>
-    !!range && r >= range.top && r <= range.bottom && c >= range.left && c <= range.right;
+    picked ? picked.has(r) : !!range && r >= range.top && r <= range.bottom && c >= range.left && c <= range.right;
 
   function select(at: Cell, extend: boolean) {
+    setPicked(null);
     if (!extend || !selected) setAnchor(at);
     else if (!anchor) setAnchor(selected);
     setSelected(at);
   }
 
-  const rangeRows = () => (range ? Array.from({ length: range.bottom - range.top + 1 }, (_, i) => range.top + i) : []);
+  /** The selected rows, top to bottom: ⌘-clicked ones, or the rectangle's. */
+  const rangeRows = () =>
+    picked
+      ? [...picked].sort((a, b) => a - b)
+      : range
+        ? Array.from({ length: range.bottom - range.top + 1 }, (_, i) => range.top + i)
+        : [];
+  const wholeRow = (r: number) =>
+    picked ? picked.has(r) : !!range && r >= range.top && r <= range.bottom && range.left === 0 && range.right === columns.length - 1;
+
+  // Row numbers select whole rows: click, drag over more, ⇧-click to extend, ⌘-click to add or remove one.
+  const draggingRows = useRef(false);
+  useEffect(() => {
+    const stop = () => (draggingRows.current = false);
+    window.addEventListener("pointerup", stop);
+    return () => window.removeEventListener("pointerup", stop);
+  }, []);
+  function pickRow(r: number, e: React.PointerEvent | React.MouseEvent) {
+    const last = columns.length - 1;
+    if (last < 0) return;
+    if (e.metaKey || e.ctrlKey) {
+      const next = new Set(picked ?? rangeRows().filter(wholeRow));
+      if (!next.delete(r)) next.add(r);
+      setPicked(next);
+      setSelected({ row: r, col: 0 });
+      setAnchor(null);
+      return;
+    }
+    if (e.shiftKey && selected) {
+      setPicked(null);
+      setAnchor({ row: (anchor ?? selected).row, col: 0 });
+      setSelected({ row: r, col: last });
+      return;
+    }
+    setPicked(null);
+    setAnchor({ row: r, col: 0 });
+    setSelected({ row: r, col: last });
+    draggingRows.current = true;
+  }
+  function dragRowsTo(r: number) {
+    if (draggingRows.current && selected && selected.row !== r) setSelected({ row: r, col: columns.length - 1 });
+  }
 
   // The selected rows, every column, to a file or the clipboard.
   const [exporting, setExporting] = useState<ExportSource | null>(null);
@@ -240,16 +285,17 @@ export function Grid(props: Props) {
     });
   }
 
-  /** The selected rectangle, loaded rows only, in `format`. */
+  /** The selected rectangle (or picked rows), loaded rows only, in `format`. */
   async function copy(format: ExportFormat) {
     if (!range) return;
-    const cols = columns.slice(range.left, range.right + 1);
+    const left = picked ? 0 : range.left;
+    const cols = columns.slice(left, picked ? columns.length : range.right + 1);
     const rows: Row[] = [];
     let missing = 0;
-    for (let i = range.top; i <= range.bottom; i++) {
+    for (const i of rangeRows()) {
       const r = row(i);
       if (!r) missing++;
-      else rows.push(cols.map((_, j) => shown(r, i, range.left + j)));
+      else rows.push(cols.map((_, j) => shown(r, i, left + j)));
     }
     const single = rows.length === 1 && cols.length === 1;
     const text =
@@ -427,8 +473,23 @@ export function Grid(props: Props) {
                 key={item.key}
                 className={`grid-row ${r ? "" : "pending"} ${r && edit?.deleted(item.index) ? "deleted" : ""}`}
                 style={{ transform: `translateY(${item.start + ROW_HEIGHT}px)`, width: totalWidth }}
+                onPointerEnter={() => dragRowsTo(item.index)}
               >
-                <div className="grid-cell grid-gutter" style={{ width: gutter }}>
+                <div
+                  className={`grid-cell grid-gutter${wholeRow(item.index) ? " picked" : ""}`}
+                  style={{ width: gutter }}
+                  onPointerDown={(e) => {
+                    if (e.button !== 0) return;
+                    e.preventDefault();
+                    pickRow(item.index, e);
+                  }}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    if (!wholeRow(item.index)) pickRow(item.index, { ...e, metaKey: false, ctrlKey: false, shiftKey: false } as React.MouseEvent);
+                    draggingRows.current = false;
+                    setMenu({ x: e.clientX, y: e.clientY });
+                  }}
+                >
                   {edit?.isNew?.(item.index) ? <span className="accent">+</span> : (rowOffset + item.index + 1).toLocaleString()}
                 </div>
                 {columns.map((column, c) => {

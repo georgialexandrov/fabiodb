@@ -39,7 +39,7 @@ app/src-tauri/src/      lib.rs: thin commands, Keychain, sessions, reconnect; me
 app/src/                React UI — App (workspaces, tabs, shortcuts), TableView, Grid,
                         QueryTab, SqlEditor, PlanView, InsightsView, AgentView,
                         ConnectionSwitcher, ConnectionForm, CommandPalette, ColumnFilter,
-                        NewRow, DiscoverDialog, ExportMenu, ScrollBench, theme, api.ts
+                        NewRow, DiscoverDialog, ExportDialog, DumpDialog, ScrollBench, theme, api.ts
 dev/pg.sh               project-local Postgres 18 on :54329 (Chinook, perf.big 5M rows, TLS)
 dev/check.sh            everything CI runs; --budgets adds the release build + budgets
 bench/startup.py        cold start, scroll fps, idle memory, bundle size against budgets
@@ -98,6 +98,9 @@ rolled back) with findings and plan tree, SQLite query plan, Insights.
   selections: format (CSV, CSV for spreadsheets, JSON, INSERT, ASCII table,
   Markdown), all rows or the first N, Copy or Save. Right-click a selection →
   "Export N rows…" (whole rows) or "Copy as ASCII table".
+- **Row selection (grid gutter):** click a row number selects the row, drag
+  selects a run, ⇧-click extends, ⌘-click toggles single rows (`picked` in
+  `Grid.tsx`). Copy, Export, Delete and the context menu act on them.
 - **Database dump/import (File menu, ⌘K):** `dump.rs`. Postgres runs pg_dump /
   pg_restore / psql — the newest on the machine (PATH, Homebrew opt/libpq and
   postgresql@N, Postgres.app, EDB, /usr/lib/postgresql; `FABIO_PG_BIN` first),
