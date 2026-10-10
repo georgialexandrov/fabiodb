@@ -113,8 +113,11 @@ async fn postgres_exports_a_whole_table_with_filters_and_sort() {
     let filters = vec![Filter { column: "album_id".into(), op: FilterOp::Eq, value: v("1") }];
     let sort = Some(Sort { column: "name".into(), descending: false });
 
-    let rows =
-        postgres().await.export_table(&relation, sort.as_ref(), &filters, ExportFormat::Csv, &path).await.unwrap();
+    let rows = postgres()
+        .await
+        .export_table(&relation, sort.as_ref(), &filters, None, ExportFormat::Csv, &path)
+        .await
+        .unwrap();
 
     let text = std::fs::read_to_string(&path).unwrap();
     std::fs::remove_file(&path).unwrap();
@@ -130,7 +133,7 @@ async fn postgres_export_is_not_capped() {
     let path = temp("big.json");
     let relation = RelationRef { schema: "public".into(), name: "invoice_line".into() };
 
-    let rows = postgres().await.export_table(&relation, None, &[], ExportFormat::Json, &path).await.unwrap();
+    let rows = postgres().await.export_table(&relation, None, &[], None, ExportFormat::Json, &path).await.unwrap();
 
     let parsed: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     std::fs::remove_file(&path).unwrap();
@@ -144,7 +147,7 @@ async fn sqlite_exports_insert_statements() {
     let path = temp("genre.sql");
     let relation = RelationRef { schema: "main".into(), name: "Genre".into() };
 
-    let rows = sqlite().await.export_table(&relation, None, &[], ExportFormat::Insert, &path).await.unwrap();
+    let rows = sqlite().await.export_table(&relation, None, &[], None, ExportFormat::Insert, &path).await.unwrap();
 
     let text = std::fs::read_to_string(&path).unwrap();
     std::fs::remove_file(&path).unwrap();
@@ -156,7 +159,7 @@ async fn sqlite_exports_insert_statements() {
 async fn failed_export_leaves_no_file() {
     let path = temp("missing.csv");
     let relation = RelationRef { schema: "public".into(), name: "no_such_table".into() };
-    assert!(postgres().await.export_table(&relation, None, &[], ExportFormat::Csv, &path).await.is_err());
+    assert!(postgres().await.export_table(&relation, None, &[], None, ExportFormat::Csv, &path).await.is_err());
     assert!(!path.exists());
 }
 
@@ -190,4 +193,84 @@ fn csv_and_tsv_keep_values_as_they_are() {
     let rows = vec![vec![v("+359 88 123")], vec![v("=1+1")]];
     assert_eq!(format_rows(ExportFormat::Csv, &columns, &rows, None).unwrap(), "phone\r\n+359 88 123\r\n=1+1\r\n");
     assert_eq!(format_rows(ExportFormat::Tsv, &columns, &rows, None).unwrap(), "phone\n+359 88 123\n=1+1\n");
+}
+
+#[test]
+fn ascii_draws_a_table_with_numbers_on_the_right() {
+    let (columns, rows) = sample();
+    let ascii = format_rows(ExportFormat::Ascii, &columns, &rows, None).unwrap();
+    assert_eq!(
+        ascii,
+        "+----+--------------------------------+------+----------+\n\
+         | id | name                           | ok   | doc      |\n\
+         +----+--------------------------------+------+----------+\n\
+         |  1 | plain                          | t    | {\"a\": 1} |\n\
+         |  2 | comma, \"quote\"\\nnewline | pipe | f    | NULL     |\n\
+         |  3 |                                | NULL | [1, 2]   |\n\
+         +----+--------------------------------+------+----------+\n"
+    );
+}
+
+#[test]
+fn ascii_aligns_untyped_numbers_and_counts_characters_not_bytes() {
+    // Query results carry no types: a column of numbers still reads as one.
+    let columns = vec![col("n", ""), col("city", "")];
+    let rows = vec![vec![v("5"), v("Sofia")], vec![v("-12.5"), v("Plovdiv ü")], vec![None, v("x")]];
+    assert_eq!(
+        format_rows(ExportFormat::Ascii, &columns, &rows, None).unwrap(),
+        "+-------+-----------+\n\
+         | n     | city      |\n\
+         +-------+-----------+\n\
+         |     5 | Sofia     |\n\
+         | -12.5 | Plovdiv ü |\n\
+         |  NULL | x         |\n\
+         +-------+-----------+\n"
+    );
+}
+
+#[test]
+fn ascii_with_no_rows_is_the_header() {
+    let ascii = format_rows(ExportFormat::Ascii, &[col("id", "integer")], &[], None).unwrap();
+    assert_eq!(ascii, "+----+\n| id |\n+----+\n+----+\n");
+}
+
+#[tokio::test]
+async fn postgres_export_stops_at_the_limit() {
+    let path = temp("limit.sql");
+    let relation = RelationRef { schema: "public".into(), name: "track".into() };
+    let sort = Some(Sort { column: "track_id".into(), descending: true });
+
+    let rows = postgres()
+        .await
+        .export_table(&relation, sort.as_ref(), &[], Some(5), ExportFormat::Insert, &path)
+        .await
+        .unwrap();
+
+    let text = std::fs::read_to_string(&path).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    assert_eq!(rows, 5);
+    assert_eq!(text.lines().count(), 5);
+    assert!(text.starts_with("INSERT INTO \"public\".\"track\""), "{text}");
+    assert!(text.contains("VALUES (3503, "), "the highest id first: {text}");
+}
+
+#[tokio::test]
+async fn table_text_formats_the_first_rows_in_both_engines() {
+    let pg = RelationRef { schema: "public".into(), name: "genre".into() };
+    let (text, rows) = postgres().await.table_text(&pg, None, &[], Some(2), ExportFormat::Ascii).await.unwrap();
+    assert_eq!(rows, 2);
+    assert_eq!(
+        text,
+        "+----------+------+\n\
+         | genre_id | name |\n\
+         +----------+------+\n\
+         |        1 | Rock |\n\
+         |        2 | Jazz |\n\
+         +----------+------+\n"
+    );
+
+    let lite = RelationRef { schema: "main".into(), name: "Genre".into() };
+    let (text, rows) = sqlite().await.table_text(&lite, None, &[], Some(3), ExportFormat::Csv).await.unwrap();
+    assert_eq!(rows, 3);
+    assert_eq!(text, "GenreId,Name\r\n1,Rock\r\n2,Jazz\r\n3,Metal\r\n");
 }

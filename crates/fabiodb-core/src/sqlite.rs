@@ -213,28 +213,54 @@ impl Lite {
         relation: &RelationRef,
         sort: Option<&Sort>,
         filters: &[Filter],
+        limit: Option<u64>,
         format: ExportFormat,
         path: &std::path::Path,
     ) -> Result<u64> {
-        let (relation, sort, filters, path) = (relation.clone(), sort.cloned(), filters.to_vec(), path.to_owned());
+        let out = export::create(path)?;
+        let written = self.write_table(relation, sort, filters, limit, format, out).await.map(|(_, rows)| rows);
+        export::remove_on_error(path, written)
+    }
+
+    pub async fn table_text(
+        &self,
+        relation: &RelationRef,
+        sort: Option<&Sort>,
+        filters: &[Filter],
+        limit: Option<u64>,
+        format: ExportFormat,
+    ) -> Result<(String, u64)> {
+        let (bytes, rows) = self.write_table(relation, sort, filters, limit, format, Vec::new()).await?;
+        Ok((String::from_utf8(bytes).map_err(|e| Error::Invalid(e.to_string()))?, rows))
+    }
+
+    async fn write_table<W: std::io::Write + Send + 'static>(
+        &self,
+        relation: &RelationRef,
+        sort: Option<&Sort>,
+        filters: &[Filter],
+        limit: Option<u64>,
+        format: ExportFormat,
+        out: W,
+    ) -> Result<(W, u64)> {
+        let (relation, sort, filters) = (relation.clone(), sort.cloned(), filters.to_vec());
         self.with(move |conn| {
             let info = describe(conn, &relation)?;
             let from = format!("{}.{}", quote(&relation.schema), quote(&relation.name));
-            let (sql, params) = sql::select_statement(&DIALECT, &from, &info.columns, sort.as_ref(), &filters)?;
+            let (mut sql, params) = sql::select_statement(&DIALECT, &from, &info.columns, sort.as_ref(), &filters)?;
+            if let Some(limit) = limit {
+                sql += &format!(" LIMIT {limit}");
+            }
             let columns = crate::postgres::result_columns(&info);
-            let out = export::create(&path)?;
-            let written = (|| {
-                let mut writer = RowWriter::new(format, &columns, Some(&relation), out)?;
-                let mut statement = conn.prepare(&sql)?;
-                let mut rows = statement.query(params_from_iter(params))?;
-                while let Some(row) = rows.next()? {
-                    let values =
-                        (0..columns.len()).map(|i| row.get_ref(i).map(text)).collect::<rusqlite::Result<Vec<_>>>()?;
-                    writer.row(&values)?;
-                }
-                Ok(writer.finish()?.1)
-            })();
-            export::remove_on_error(&path, written)
+            let mut writer = RowWriter::new(format, &columns, Some(&relation), out)?;
+            let mut statement = conn.prepare(&sql)?;
+            let mut rows = statement.query(params_from_iter(params))?;
+            while let Some(row) = rows.next()? {
+                let values =
+                    (0..columns.len()).map(|i| row.get_ref(i).map(text)).collect::<rusqlite::Result<Vec<_>>>()?;
+                writer.row(&values)?;
+            }
+            writer.finish()
         })
         .await
     }

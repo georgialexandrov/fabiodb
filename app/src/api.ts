@@ -158,7 +158,22 @@ export type RowUpdate = { key: ColumnValue[]; changes: { column: string; old: st
 /** One save: edits, then deletions (by primary key), then new rows (columns left out take defaults). */
 export type Changes = { updates: RowUpdate[]; inserts: ColumnValue[][]; deletes: ColumnValue[][] };
 
-export type ExportFormat = "csv" | "spreadsheet_csv" | "tsv" | "json" | "markdown" | "insert";
+export type ExportFormat = "csv" | "spreadsheet_csv" | "tsv" | "json" | "markdown" | "insert" | "ascii";
+
+export type DumpOptions = {
+  content: "all" | "schema" | "data";
+  /** Postgres: pg_dump's custom archive. SQLite: a copy of the database file. */
+  format: "sql" | "archive";
+  /** Postgres: only these schemas; all when empty. */
+  schemas: string[];
+  owners: boolean;
+  clean: boolean;
+};
+
+export type DumpReport = { elapsed_ms: number; bytes: number; tool: string | null };
+
+/** A line about what a running dump or restore is doing. */
+export type JobProgress = { job: string; line: string };
 
 export type CompletionTable = { schema: string; name: string; columns: string[] };
 
@@ -199,9 +214,16 @@ export const api = {
     relation: RelationRef,
     sort: Sort | null,
     filters: Filter[],
+    limit: number | null,
     format: ExportFormat,
     path: string,
-  ) => invoke<number>("export_table", { id, relation, sort, filters, format, path }),
+  ) => invoke<number>("export_table", { id, relation, sort, filters, limit, format, path }),
+  copyTable: (id: string, relation: RelationRef, sort: Sort | null, filters: Filter[], limit: number | null, format: ExportFormat) =>
+    invoke<[string, number]>("copy_table", { id, relation, sort, filters, limit, format }),
+  dumpDatabase: (id: string, job: string, options: DumpOptions, path: string) =>
+    invoke<DumpReport>("dump_database", { id, job, options, path }),
+  restoreDatabase: (id: string, job: string, path: string) => invoke<DumpReport>("restore_database", { id, job, path }),
+  cancelJob: (job: string) => invoke<void>("cancel_job", { job }),
   exportRows: (columns: ResultColumn[], rows: Rows, format: ExportFormat, table: RelationRef | null, path: string) =>
     invoke<void>("export_rows", { columns, rows, format, table, path }),
   copyRows: (columns: ResultColumn[], rows: Rows, format: ExportFormat, table: RelationRef | null) =>

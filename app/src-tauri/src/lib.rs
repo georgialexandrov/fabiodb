@@ -7,12 +7,13 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use fabiodb_core::{
-    AuditEntry, AuditLog, Changes, CompletionTable, Count, Db, Discovery, ExportFormat, Filter, Insights, Layout, Link,
-    Links, NewAuditEntry, Page, PageRequest, PgTarget, Plan, QueryResult, Relation, RelationRef, ResultColumn, Rows,
-    SavedConnection, Schema, Snippet, Snippets, Sort, Source, Store, TableInfo, Target, format_rows, layout_path,
+    AuditEntry, AuditLog, Changes, CompletionTable, Count, Db, Discovery, DumpOptions, DumpReport, ExportFormat,
+    Filter, Insights, Layout, Link, Links, NewAuditEntry, Page, PageRequest, PgTarget, Plan, QueryResult, Relation,
+    RelationRef, ResultColumn, Rows, SavedConnection, Schema, Snippet, Snippets, Sort, Source, Store, TableInfo,
+    Target, format_rows, layout_path,
 };
 use serde::Serialize;
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 use tauri_plugin_window_state::StateFlags;
 
 static STARTED: OnceLock<Instant> = OnceLock::new();
@@ -30,6 +31,8 @@ struct App {
     open: Mutex<HashMap<String, Arc<Db>>>,
     /// One connection per query tab, so tabs have their own session and write mode.
     sessions: Mutex<HashMap<String, Session>>,
+    /// Dumps and restores running now, by the id the page gave them; sending stops one.
+    jobs: Mutex<HashMap<String, tokio::sync::oneshot::Sender<()>>>,
 }
 
 struct Session {
@@ -94,6 +97,11 @@ impl App {
     /// `id` is a saved connection's id, or `id#database` for another database
     /// on the same server (⌘D): same host and credentials, its own workspace.
     async fn open_db(&self, id: &str) -> Res<Db> {
+        Db::open(&self.target(id)?).await.map_err(err)
+    }
+
+    /// Where `id` points, with its password from the Keychain.
+    fn target(&self, id: &str) -> Res<Target> {
         let (connection_id, database) = match id.split_once('#') {
             Some((c, d)) => (c, Some(d)),
             None => (id, None),
@@ -103,7 +111,7 @@ impl App {
         if let (Target::Postgres(pg), Some(database)) = (&mut target, database) {
             pg.database = database.to_owned();
         }
-        Db::open(&target).await.map_err(err)
+        Ok(target)
     }
 
     fn db(&self, id: &str) -> Res<Arc<Db>> {
@@ -279,20 +287,127 @@ async fn page(app: State<'_, App>, id: String, request: PageRequest) -> Res<Page
     app.browsing(&id, |db| async move { db.page(request).await }).await
 }
 
-/// Streams a whole table (under the grid's sort and filters) to a file, on its
-/// own connection so browsing carries on meanwhile. Returns the row count.
+/// Streams a table (under the grid's sort and filters; its first `limit` rows
+/// if given) to a file, on its own connection so browsing carries on
+/// meanwhile. Returns the row count.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 async fn export_table(
     app: State<'_, App>,
     id: String,
     relation: RelationRef,
     sort: Option<Sort>,
     filters: Vec<Filter>,
+    limit: Option<u64>,
     format: ExportFormat,
     path: PathBuf,
 ) -> Res<u64> {
     let db = app.open_db(&id).await?;
-    db.export_table(&relation, sort.as_ref(), &filters, format, &path).await.map_err(err)
+    db.export_table(&relation, sort.as_ref(), &filters, limit, format, &path).await.map_err(err)
+}
+
+/// As `export_table`, as text for the clipboard: `(text, rows)`.
+#[tauri::command]
+async fn copy_table(
+    app: State<'_, App>,
+    id: String,
+    relation: RelationRef,
+    sort: Option<Sort>,
+    filters: Vec<Filter>,
+    limit: Option<u64>,
+    format: ExportFormat,
+) -> Res<(String, u64)> {
+    let db = app.open_db(&id).await?;
+    db.table_text(&relation, sort.as_ref(), &filters, limit, format).await.map_err(err)
+}
+
+#[derive(Clone, Serialize)]
+struct JobProgress {
+    job: String,
+    line: String,
+}
+
+impl App {
+    /// Runs a dump or restore under `job`, sending its progress to the page;
+    /// `cancel_job` stops it.
+    async fn job<F: std::future::Future<Output = fabiodb_core::Result<DumpReport>>>(
+        &self,
+        handle: &tauri::AppHandle,
+        job: &str,
+        run: impl FnOnce(fabiodb_core::Progress, tokio::sync::oneshot::Receiver<()>) -> F,
+    ) -> Res<DumpReport> {
+        let (stop, stopped) = tokio::sync::oneshot::channel();
+        self.jobs.lock().unwrap().insert(job.to_owned(), stop);
+        let (handle, name) = (handle.clone(), job.to_owned());
+        let progress: fabiodb_core::Progress = Arc::new(move |line: &str| {
+            let _ = handle.emit("job-progress", JobProgress { job: name.clone(), line: line.to_owned() });
+        });
+        let result = run(progress, stopped).await;
+        self.jobs.lock().unwrap().remove(job);
+        result.map_err(err)
+    }
+}
+
+/// Writes the whole database (pg_dump for Postgres) to `path`.
+#[tauri::command]
+async fn dump_database(
+    app: State<'_, App>,
+    handle: tauri::AppHandle,
+    id: String,
+    job: String,
+    options: DumpOptions,
+    path: PathBuf,
+) -> Res<DumpReport> {
+    let target = app.target(&id)?;
+    app.job(&handle, &job, |progress, stopped| async move {
+        fabiodb_core::dump(&target, &options, &path, progress, async {
+            let _ = stopped.await;
+        })
+        .await
+    })
+    .await
+}
+
+/// Runs a dump file against the database in one transaction, and records it
+/// like any statement typed by hand.
+#[tauri::command]
+async fn restore_database(
+    app: State<'_, App>,
+    handle: tauri::AppHandle,
+    id: String,
+    job: String,
+    path: PathBuf,
+) -> Res<DumpReport> {
+    let target = app.target(&id)?;
+    let started = Instant::now();
+    let file = path.clone();
+    let result = app
+        .job(&handle, &job, |progress, stopped| async move {
+            fabiodb_core::restore(&target, &file, progress, async {
+                let _ = stopped.await;
+            })
+            .await
+        })
+        .await;
+    let entry = NewAuditEntry {
+        connection_id: id,
+        source: Source::Human,
+        sql: format!("-- Imported {}", path.display()),
+        elapsed_ms: started.elapsed().as_secs_f64() * 1000.0,
+        rows: None,
+        error: result.as_ref().err().cloned(),
+    };
+    if let Err(e) = app.audit.record(&entry) {
+        eprintln!("audit log: {e}");
+    }
+    result
+}
+
+#[tauri::command]
+fn cancel_job(app: State<App>, job: String) {
+    if let Some(stop) = app.jobs.lock().unwrap().remove(&job) {
+        let _ = stop.send(());
+    }
 }
 
 /// Saves rows already on screen (a query result) to a file.
@@ -627,6 +742,7 @@ pub fn run() {
                 layouts: config.join("layouts"),
                 open: Mutex::default(),
                 sessions: Mutex::default(),
+                jobs: Mutex::default(),
             });
             Ok(())
         })
@@ -648,6 +764,10 @@ pub fn run() {
             page,
             completion_schema,
             export_table,
+            copy_table,
+            dump_database,
+            restore_database,
+            cancel_job,
             export_rows,
             copy_rows,
             preview_changes,

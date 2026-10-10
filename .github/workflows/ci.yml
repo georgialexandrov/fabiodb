@@ -31,11 +31,17 @@ jobs:
             postgres:18 -c shared_preload_libraries=pg_stat_statements \
             -c ssl=on -c ssl_cert_file=/ssl/server.crt -c ssl_key_file=/ssl/server.key
 
-      - name: System packages (Tauri, keyring, psql)
+      # The Postgres 18 client tools: pg_dump refuses a server newer than itself,
+      # and Ubuntu's own postgresql-client is older.
+      - name: System packages (Tauri, keyring, Postgres 18 client)
         run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSo /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev \
-            libayatana-appindicator3-dev librsvg2-dev libdbus-1-dev pkg-config postgresql-client
+            libayatana-appindicator3-dev librsvg2-dev libdbus-1-dev pkg-config postgresql-client-18
 
       - uses: dtolnay/rust-toolchain@stable
         with:

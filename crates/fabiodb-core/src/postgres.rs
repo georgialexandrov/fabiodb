@@ -136,9 +136,9 @@ fn percent_decode(s: &str) -> String {
 /// Amazon RDS signs its certificates with its own CAs, one per region, which no
 /// system trusts. Servers under `*.rds.amazonaws.com` get them without asking.
 /// Source: https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
-const RDS_BUNDLE: &[u8] = include_bytes!("../certs/rds-global-bundle.pem");
+pub(crate) const RDS_BUNDLE: &[u8] = include_bytes!("../certs/rds-global-bundle.pem");
 
-fn is_rds(host: &str) -> bool {
+pub(crate) fn is_rds(host: &str) -> bool {
     host.trim_end_matches('.').to_ascii_lowercase().ends_with(".rds.amazonaws.com")
 }
 
@@ -743,27 +743,52 @@ impl Pg {
         relation: &RelationRef,
         sort: Option<&Sort>,
         filters: &[Filter],
+        limit: Option<u64>,
         format: ExportFormat,
         path: &std::path::Path,
     ) -> Result<u64> {
+        let out = export::create(path)?;
+        let written = self.write_table(relation, sort, filters, limit, format, out).await.map(|(_, rows)| rows);
+        export::remove_on_error(path, written)
+    }
+
+    pub async fn table_text(
+        &self,
+        relation: &RelationRef,
+        sort: Option<&Sort>,
+        filters: &[Filter],
+        limit: Option<u64>,
+        format: ExportFormat,
+    ) -> Result<(String, u64)> {
+        let (bytes, rows) = self.write_table(relation, sort, filters, limit, format, Vec::new()).await?;
+        Ok((String::from_utf8(bytes).map_err(|e| Error::Invalid(e.to_string()))?, rows))
+    }
+
+    async fn write_table<W: std::io::Write + Send>(
+        &self,
+        relation: &RelationRef,
+        sort: Option<&Sort>,
+        filters: &[Filter],
+        limit: Option<u64>,
+        format: ExportFormat,
+        out: W,
+    ) -> Result<(W, u64)> {
         let info = self.describe(relation).await?;
         let from = format!("{}.{}", quote(&relation.schema), quote(&relation.name));
-        let (sql, params) = sql::select_statement(&DIALECT, &from, &info.columns, sort, filters)?;
-        let columns = result_columns(&info);
-        let out = export::create(path)?;
-        let written = async {
-            let mut writer = RowWriter::new(format, &columns, Some(relation), out)?;
-            // Rows are written as they arrive, so a table of any size fits.
-            let stream = self.client.query_raw(&sql, params.iter()).await?;
-            futures_util::pin_mut!(stream);
-            while let Some(row) = stream.next().await {
-                let row = row?;
-                writer.row(&(0..row.len()).map(|i| row.get(i)).collect::<Vec<Option<String>>>())?;
-            }
-            Ok(writer.finish()?.1)
+        let (mut sql, params) = sql::select_statement(&DIALECT, &from, &info.columns, sort, filters)?;
+        if let Some(limit) = limit {
+            sql += &format!(" LIMIT {limit}");
         }
-        .await;
-        export::remove_on_error(path, written)
+        let columns = result_columns(&info);
+        let mut writer = RowWriter::new(format, &columns, Some(relation), out)?;
+        // Rows are written as they arrive, so a table of any size fits.
+        let stream = self.client.query_raw(&sql, params.iter()).await?;
+        futures_util::pin_mut!(stream);
+        while let Some(row) = stream.next().await {
+            let row = row?;
+            writer.row(&(0..row.len()).map(|i| row.get(i)).collect::<Vec<Option<String>>>())?;
+        }
+        writer.finish()
     }
 
     pub async fn apply_changes(&self, relation: &RelationRef, info: &TableInfo, changes: &Changes) -> Result<u64> {

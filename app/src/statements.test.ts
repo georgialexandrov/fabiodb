@@ -58,6 +58,13 @@ describe("statementAt", () => {
     expect(statementAt(stmts, sql.indexOf(";") + 1)?.text).toBe("select 1");
   });
 
+  it("takes every line of the statement up to its semicolon, as ⌘↵ runs it", () => {
+    const sql = "select name\n  from track\n where album_id = 1;\nselect 2;";
+    const all = splitStatements(sql);
+    expect(statementAt(all, sql.indexOf("from"))?.text).toBe("select name\n  from track\n where album_id = 1");
+    expect(statementAt(all, sql.indexOf("2"))?.text).toBe("select 2");
+  });
+
   it("is undefined for empty input", () => {
     expect(statementAt([], 0)).toBeUndefined();
   });

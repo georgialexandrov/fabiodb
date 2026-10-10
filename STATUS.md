@@ -2,7 +2,7 @@
 
 Read this first in a new session, then `CLAUDE.md` (rules), `PLAN.md` (phases,
 budgets, the v0.1 list) and `VOICE.md` (any text users see). Last updated
-2026-09-27: licence, rename and bundle id settled.
+2026-10-10: export dialog (first N rows, ASCII table), database dump/import.
 
 ## What Fabio is
 
@@ -24,7 +24,8 @@ crates/fabiodb-core/      all database logic; the app and the MCP server share i
   src/tunnel.rs         SSH tunnels via the system ssh, shared per host
   src/sql.rs            page/count/select builder (identifiers only from describe)
   src/edit.rs           Changes (updates/deletes/inserts) → guarded statements + preview
-  src/export.rs         RowWriter: CSV/TSV/JSON/Markdown/INSERT, streaming
+  src/export.rs         RowWriter: CSV/TSV/JSON/Markdown/INSERT/ASCII table, streaming
+  src/dump.rs           whole database out/in: pg_dump/pg_restore/psql (newest found), SQLite native
   src/discover.rs       databases in a folder: Compose services (+ .env), SQLite files
   src/plan.rs           EXPLAIN → PlanNode tree (both engines) + findings
   src/insights.rs       pg_stat_activity / pg_stat_statements / index + scan stats
@@ -93,6 +94,24 @@ rolled back) with findings and plan tree, SQLite query plan, Insights.
 - **CI:** `dev/check.sh`; workflow written; budgets fail the check.
 - **Export:** tables stream all matching rows (CSV/JSON/INSERT, 5M rows in
   1.3 s at 8 MB); results save/copy what's on screen, never re-run.
+  One Export dialog (`ExportDialog.tsx`) for tables, results and grid
+  selections: format (CSV, CSV for spreadsheets, JSON, INSERT, ASCII table,
+  Markdown), all rows or the first N, Copy or Save. Right-click a selection →
+  "Export N rows…" (whole rows) or "Copy as ASCII table".
+- **Database dump/import (File menu, ⌘K):** `dump.rs`. Postgres runs pg_dump /
+  pg_restore / psql — the newest on the machine (PATH, Homebrew opt/libpq and
+  postgresql@N, Postgres.app, EDB, /usr/lib/postgresql; `FABIO_PG_BIN` first),
+  through the same tunnel/TLS mode, password in a 0600 passfile. SQL or custom
+  archive; all / structure / data; one schema; owners off by default; optional
+  `--clean`. A schema is picked by excluding the others (`--schema=public`
+  writes `CREATE SCHEMA public`, which fails on a new database). SQLite: own
+  `.dump`-style SQL (generated columns left out, sqlite_sequence kept, shadow
+  tables skipped) or a file copy (`VACUUM INTO`). Import = one transaction
+  (psql `--single-transaction` + ON_ERROR_STOP, pg_restore `--single-transaction`,
+  SQLite with FKs off and `foreign_key_check` before COMMIT; a .sqlite file
+  replaces the contents via the backup API). Cancel kills/interrupts; progress
+  is pg_dump's `--verbose` lines. Imports are audited as one `-- Imported <path>`
+  entry. CI installs postgresql-client-18 from PGDG for this.
 - **Editing:** cells inline (Enter/double-click), row details pane (⌘I), new
   rows (+ Row), delete rows (⌘⌫); all pending until ⌘S shows the statements;
   one transaction, each keyed on the whole primary key, updates guarded by the
@@ -152,7 +171,8 @@ reload, save, audited).
 
 **Tests only, not yet clicked through:** column filters, row details pane, add
 and delete rows, grid ranges and copy formats, ⌘K, snippets, connection
-switcher and start page, ⌘D, Docker folder dialog, context completion, schema
+switcher and start page, ⌘D, Docker folder dialog, export dialog, database
+export/import dialog, context completion, schema
 picker, schema frames in the diagram, SSL/SSH form sections,
 menu bar (check each shortcut fires once), layout restore, reconnect in the
 app, export dialogs. The user was using the app during this work, so UI
@@ -184,6 +204,9 @@ automation stopped; these want a manual pass.
   check and `BEGIN READ ONLY` guard.
 - **A hidden window gets no animation frames.** Showing it "after first paint"
   waited for a 1.5 s fallback (1717 ms start). Show after render, then measure paint.
+- **rusqlite's bundled SQLite has foreign keys ON by default**, and
+  `PRAGMA foreign_keys` is a no-op inside a transaction: set it before BEGIN.
+- pg_dump refuses a server newer than itself; Ubuntu's postgresql-client is older than CI's server.
 - tokio-postgres `Config::port()` appends; set it once. Its non-server errors
   hide the reason in `source()` (now chained into the message).
 - tokio-postgres knows no `verify-*` sslmode or `sslrootcert`; Fabio strips and

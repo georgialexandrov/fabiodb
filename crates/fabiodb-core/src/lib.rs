@@ -13,6 +13,7 @@ mod audit;
 mod dbml;
 mod diagram;
 mod discover;
+mod dump;
 mod edit;
 mod export;
 mod insights;
@@ -33,6 +34,7 @@ pub use audit::{AuditEntry, AuditLog, NewAuditEntry, Source};
 pub use dbml::dbml;
 pub use diagram::{Layout, Link, Links, layout_path};
 pub use discover::{Discovered, Discovery, discover};
+pub use dump::{DumpContent, DumpFormat, DumpOptions, DumpReport, Progress, dump, restore};
 pub use edit::{CellChange, Changes, ColumnValue, RowUpdate};
 pub use export::{ExportFormat, RowWriter, format_rows};
 pub use insights::{Activity, Insights, SeqScanTable, TopStatement, UnusedIndex};
@@ -180,19 +182,36 @@ impl Db {
         }
     }
 
-    /// Every row matching `filters`, in `sort` then primary-key order, streamed
-    /// to `path`. No row cap. Returns how many rows were written.
+    /// Every row matching `filters` (the first `limit` of them, if given), in
+    /// `sort` then primary-key order, streamed to `path`. No row cap otherwise.
+    /// Returns how many rows were written.
     pub async fn export_table(
         &self,
         relation: &RelationRef,
         sort: Option<&Sort>,
         filters: &[Filter],
+        limit: Option<u64>,
         format: ExportFormat,
         path: &std::path::Path,
     ) -> Result<u64> {
         match self {
-            Db::Postgres(pg) => pg.export_table(relation, sort, filters, format, path).await,
-            Db::Sqlite(lite) => lite.export_table(relation, sort, filters, format, path).await,
+            Db::Postgres(pg) => pg.export_table(relation, sort, filters, limit, format, path).await,
+            Db::Sqlite(lite) => lite.export_table(relation, sort, filters, limit, format, path).await,
+        }
+    }
+
+    /// As [`Db::export_table`], into a string (for the clipboard), with how many rows it holds.
+    pub async fn table_text(
+        &self,
+        relation: &RelationRef,
+        sort: Option<&Sort>,
+        filters: &[Filter],
+        limit: Option<u64>,
+        format: ExportFormat,
+    ) -> Result<(String, u64)> {
+        match self {
+            Db::Postgres(pg) => pg.table_text(relation, sort, filters, limit, format).await,
+            Db::Sqlite(lite) => lite.table_text(relation, sort, filters, limit, format).await,
         }
     }
 

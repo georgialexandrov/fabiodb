@@ -3,6 +3,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { ResizeHandle } from "./resize";
 import { toggleRowPane, useRowPane } from "./rowPane";
 import { clampColumnWidth, fitColumnWidth, preview } from "./columnWidth";
+import { ExportDialog, firstRows, type ExportSource } from "./ExportDialog";
 import { api, isNumeric, plural, type ExportFormat, type RelationRef, type ResultColumn, type Rows, type Sort } from "./api";
 
 const ROW_HEIGHT = 26;
@@ -56,6 +57,7 @@ const COPY_FORMATS: { format: ExportFormat; label: string }[] = [
   { format: "markdown", label: "Markdown" },
   { format: "json", label: "JSON" },
   { format: "insert", label: "INSERT statements" },
+  { format: "ascii", label: "ASCII table" },
 ];
 
 export type GridEdit = {
@@ -209,6 +211,34 @@ export function Grid(props: Props) {
   }
 
   const rangeRows = () => (range ? Array.from({ length: range.bottom - range.top + 1 }, (_, i) => range.top + i) : []);
+
+  // The selected rows, every column, to a file or the clipboard.
+  const [exporting, setExporting] = useState<ExportSource | null>(null);
+  function exportSelection() {
+    const loaded: Row[] = [];
+    for (const i of rangeRows()) {
+      const r = row(i);
+      if (r) loaded.push(r.map((_, c) => shown(r, i, c)));
+    }
+    const missing = rangeRows().length - loaded.length;
+    const title = loaded.length === 1 ? "1 selected row" : `${loaded.length.toLocaleString()} selected rows`;
+    setExporting({
+      title,
+      baseName: table ? `${table.name}-rows` : "rows",
+      total: loaded.length,
+      hasTable: !!table,
+      note: missing ? `${plural(missing, "row")} not loaded yet are left out.` : undefined,
+      save: async (format, limit, path) => {
+        const rows = firstRows(loaded, limit);
+        await api.exportRows(columns, rows, format, table ?? null, path);
+        return rows.length;
+      },
+      copy: async (format, limit) => {
+        const rows = firstRows(loaded, limit);
+        return { text: await api.copyRows(columns, rows, format, table ?? null), rows: rows.length };
+      },
+    });
+  }
 
   /** The selected rectangle, loaded rows only, in `format`. */
   async function copy(format: ExportFormat) {
@@ -504,8 +534,13 @@ export function Grid(props: Props) {
               Copy as {f.label}
             </button>
           ))}
+          <div className="menu-separator" />
+          <button onClick={() => (setMenu(null), exportSelection())}>
+            Export {rangeRows().length === 1 ? "row" : `${rangeRows().length.toLocaleString()} rows`}…
+          </button>
         </div>
       )}
+      {exporting && <ExportDialog source={exporting} onDone={(m) => onNotice?.(m)} onClose={() => setExporting(null)} />}
     </div>
   );
 }

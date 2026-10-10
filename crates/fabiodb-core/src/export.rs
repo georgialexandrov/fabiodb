@@ -1,5 +1,6 @@
-//! Rows out of Fabio: CSV, JSON, Markdown and INSERT statements, written as
-//! they arrive so a whole table can stream to a file.
+//! Rows out of Fabio: CSV, JSON, Markdown, INSERT statements and ASCII tables,
+//! written as they arrive so a whole table can stream to a file (an ASCII
+//! table waits for its last row, which sets the column widths).
 //!
 //! Values are the engine's text. Where the column type is known, JSON and
 //! INSERT use it (numbers, booleans, embedded JSON); where it isn't (query
@@ -28,6 +29,8 @@ pub enum ExportFormat {
     Markdown,
     /// One `INSERT` per row; needs the table name.
     Insert,
+    /// A box drawn in `+`, `-` and `|`, as psql and mysql print results.
+    Ascii,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -72,6 +75,10 @@ pub struct RowWriter<W: Write> {
     insert_prefix: String,
     out: W,
     rows: u64,
+    /// Ascii: every row, until `finish` knows how wide each column is.
+    held: Vec<Vec<Option<String>>>,
+    /// Columns without a type (query results).
+    untyped: Vec<bool>,
 }
 
 impl<W: Write> RowWriter<W> {
@@ -82,6 +89,7 @@ impl<W: Write> RowWriter<W> {
         mut out: W,
     ) -> Result<Self> {
         let cols: Vec<_> = columns.iter().map(|c| (c.name.clone(), kind(&c.data_type))).collect();
+        let untyped = columns.iter().map(|c| c.data_type.is_empty()).collect();
         let mut insert_prefix = String::new();
         match format {
             ExportFormat::Csv | ExportFormat::SpreadsheetCsv => {
@@ -99,6 +107,7 @@ impl<W: Write> RowWriter<W> {
                 let align: Vec<_> = cols.iter().map(|(_, k)| if *k == Kind::Number { "--:" } else { "---" }).collect();
                 write!(out, "| {} |\n| {} |\n", names.join(" | "), align.join(" | "))?;
             }
+            ExportFormat::Ascii => {}
             ExportFormat::Insert => {
                 let table = table.ok_or_else(|| Error::Invalid("INSERT statements need a table name.".into()))?;
                 let names: Vec<_> = cols.iter().map(|(n, _)| quote(n)).collect();
@@ -110,7 +119,7 @@ impl<W: Write> RowWriter<W> {
                 );
             }
         }
-        Ok(RowWriter { format, columns: cols, insert_prefix, out, rows: 0 })
+        Ok(RowWriter { format, columns: cols, insert_prefix, out, rows: 0, held: Vec::new(), untyped })
     }
 
     pub fn row(&mut self, row: &[Option<String>]) -> Result<()> {
@@ -146,6 +155,7 @@ impl<W: Write> RowWriter<W> {
                 let literals: Vec<_> = values.map(|((_, kind), v)| sql_literal(*kind, v.as_deref())).collect();
                 writeln!(self.out, "{}({});", self.insert_prefix, literals.join(", "))?;
             }
+            ExportFormat::Ascii => self.held.push(row.iter().map(|v| v.as_deref().map(ascii_cell)).collect()),
         }
         self.rows += 1;
         Ok(())
@@ -153,8 +163,10 @@ impl<W: Write> RowWriter<W> {
 
     /// The writer back, and how many rows went through it.
     pub fn finish(mut self) -> Result<(W, u64)> {
-        if self.format == ExportFormat::Json {
-            self.out.write_all(b"]")?;
+        match self.format {
+            ExportFormat::Json => self.out.write_all(b"]")?,
+            ExportFormat::Ascii => write_ascii(&mut self.out, &self.columns, &self.untyped, &self.held)?,
+            _ => {}
         }
         self.out.flush()?;
         Ok((self.out, self.rows))
@@ -222,6 +234,60 @@ fn spreadsheet_safe(kind: Kind, value: &str) -> String {
 
 fn markdown_cell(value: &str) -> String {
     value.replace('\\', "\\\\").replace('|', "\\|").replace("\r\n", "<br>").replace(['\n', '\r'], "<br>")
+}
+
+/// One line per row: line breaks and tabs are shown escaped.
+fn ascii_cell(value: &str) -> String {
+    value.replace('\\', "\\\\").replace("\r\n", "\\n").replace('\n', "\\n").replace('\r', "\\r").replace('\t', "\\t")
+}
+
+/// Numbers sit on the right: typed number columns, and untyped ones (query
+/// results) whose every value reads as a number. Only the layout depends on it.
+fn write_ascii(
+    out: &mut impl Write,
+    columns: &[(String, Kind)],
+    untyped: &[bool],
+    rows: &[Vec<Option<String>>],
+) -> Result<()> {
+    const NULL: &str = "NULL";
+    let width = |s: &str| s.chars().count();
+    let right: Vec<bool> = (0..columns.len())
+        .map(|c| match columns[c].1 {
+            Kind::Number => true,
+            _ if untyped[c] => {
+                rows.iter().any(|r| r[c].is_some()) && rows.iter().filter_map(|r| r[c].as_deref()).all(is_number)
+            }
+            _ => false,
+        })
+        .collect();
+    let widths: Vec<usize> = (0..columns.len())
+        .map(|c| rows.iter().map(|r| width(r[c].as_deref().unwrap_or(NULL))).fold(width(&columns[c].0), usize::max))
+        .collect();
+    let rule = format!("+{}+\n", widths.iter().map(|w| "-".repeat(w + 2)).collect::<Vec<_>>().join("+"));
+    let line = |cells: Vec<(&str, bool)>| {
+        let padded: Vec<_> = cells
+            .iter()
+            .zip(&widths)
+            .map(|((v, right), w)| {
+                let pad = " ".repeat(w - width(v));
+                if *right { format!(" {pad}{v} ") } else { format!(" {v}{pad} ") }
+            })
+            .collect();
+        format!("|{}|\n", padded.join("|"))
+    };
+    out.write_all(rule.as_bytes())?;
+    out.write_all(line(columns.iter().map(|(n, _)| (n.as_str(), false)).collect()).as_bytes())?;
+    out.write_all(rule.as_bytes())?;
+    for row in rows {
+        let cells = row.iter().zip(&right).map(|(v, r)| (v.as_deref().unwrap_or(NULL), *r)).collect();
+        out.write_all(line(cells).as_bytes())?;
+    }
+    out.write_all(rule.as_bytes())?;
+    Ok(())
+}
+
+fn is_number(v: &str) -> bool {
+    !v.is_empty() && v.chars().all(|c| c.is_ascii_digit() || "+-.eE".contains(c)) && v.parse::<f64>().is_ok()
 }
 
 fn json_value(kind: Kind, value: Option<&str>) -> serde_json::Value {

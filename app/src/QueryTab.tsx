@@ -1,14 +1,11 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
-import { chooseFile, ExportMenu } from "./ExportMenu";
+import { ExportDialog, firstRows, type ExportSource } from "./ExportDialog";
 import { Grid } from "./Grid";
 import { RowPaneButton } from "./rowPane";
 import {
   api,
-  fileName,
-  plural,
   type AuditEntry,
   type CompletionTable,
-  type ExportFormat,
   type Plan,
   type QueryError,
   type QueryResult,
@@ -183,17 +180,23 @@ export function QueryTab({ connectionId, engine, schema, activeSchema, sql, onSq
   // Query results have no column types, so values export as text.
   const resultColumns = () => result!.columns.map((name) => ({ name, data_type: "" }));
 
-  async function saveResult(format: ExportFormat) {
-    const path = await chooseFile("result", format);
-    if (!path) return null;
-    await api.exportRows(resultColumns(), result!.rows, format, null, path);
-    return `Saved ${plural(result!.rows.length, "row")} to ${fileName(path)}`;
-  }
-
-  async function copyResult(format: ExportFormat, label: string) {
-    await navigator.clipboard.writeText(await api.copyRows(resultColumns(), result!.rows, format, null));
-    return `Copied ${plural(result!.rows.length, "row")} as ${label}`;
-  }
+  const [exporting, setExporting] = useState(false);
+  const exportSource = (): ExportSource => ({
+    title: "the result",
+    baseName: "result",
+    total: result!.rows.length,
+    hasTable: false,
+    note: result!.truncated ? "The rows shown; the result was capped." : "The rows shown; the query isn't run again.",
+    save: async (format, limit, path) => {
+      const rows = firstRows(result!.rows, limit);
+      await api.exportRows(resultColumns(), rows, format, null, path);
+      return rows.length;
+    },
+    copy: async (format, limit) => {
+      const rows = firstRows(result!.rows, limit);
+      return { text: await api.copyRows(resultColumns(), rows, format, null), rows: rows.length };
+    },
+  });
 
   async function cancel() {
     if (!running || !session) return;
@@ -250,22 +253,9 @@ export function QueryTab({ connectionId, engine, schema, activeSchema, sql, onSq
         <span className="grow" />
         {writable && <span className="write-note">Write mode — statements can change data.</span>}
         {result && result.columns.length > 0 && view === "results" && (
-          <ExportMenu
-            onDone={setNotice}
-            note={
-              result.truncated
-                ? `The ${result.rows.length.toLocaleString()} rows shown; the result was capped.`
-                : `The ${plural(result.rows.length, "row")} shown.`
-            }
-            items={[
-              { label: "CSV…", run: () => saveResult("csv") },
-              { label: "CSV for spreadsheets…", run: () => saveResult("spreadsheet_csv") },
-              { label: "JSON…", run: () => saveResult("json") },
-              "separator",
-              { label: "Copy as Markdown", run: () => copyResult("markdown", "Markdown") },
-              { label: "Copy as CSV", run: () => copyResult("csv", "CSV") },
-            ]}
-          />
+          <button className="ghost" onClick={() => setExporting(true)} title="Export the rows shown">
+            Export
+          </button>
         )}
         <button className={writable ? "danger on" : "ghost"} onClick={toggleWrite} disabled={!session} title="Toggle write mode for this tab">
           {writable ? "Write" : "Read-only"}
@@ -417,6 +407,8 @@ export function QueryTab({ connectionId, engine, schema, activeSchema, sql, onSq
           </form>
         </div>
       )}
+
+      {exporting && result && <ExportDialog source={exportSource()} onDone={setNotice} onClose={() => setExporting(false)} />}
 
       <footer className="status">
         {!session

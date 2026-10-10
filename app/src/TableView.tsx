@@ -1,16 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ColumnFilter, filterText } from "./ColumnFilter";
-import { chooseFile, ExportMenu } from "./ExportMenu";
+import { ExportDialog, type ExportSource } from "./ExportDialog";
 import { Grid, type GridEdit, type GridLink, type LinkedRow } from "./Grid";
 import { RowPaneButton } from "./rowPane";
 import { Structure } from "./Structure";
 import {
   api,
-  fileName,
   plural,
   type ColumnValue,
   type Count,
-  type ExportFormat,
   type Filter,
   type Page,
   type Relation,
@@ -372,14 +370,20 @@ export function TableView({ connectionId, relation, follow, onOpen, onPin }: Pro
     if (changeCount > 0) onPin?.();
   }, [changeCount > 0]);
 
-  /** Every row under the current sort and filters, streamed to a file by the core. */
-  async function exportTable(format: ExportFormat) {
-    const path = await chooseFile(relation.name, format);
-    if (!path) return null;
-    const started = performance.now();
-    const rows = await api.exportTable(connectionId, relation, sort, filters, format, path);
-    return `Saved ${plural(rows, "row")} to ${fileName(path)} · ${((performance.now() - started) / 1000).toFixed(1)} s`;
-  }
+  /** Rows under the current sort and filters, streamed to a file (or the clipboard) by the core. */
+  const [exporting, setExporting] = useState(false);
+  const exportSource: ExportSource = {
+    title: relation.name,
+    baseName: relation.name,
+    total: exactTotal,
+    hasTable: true,
+    note: filters.length > 0 ? "Rows that match the filters, in the grid's order." : "In the grid's order.",
+    save: (format, limit, path) => api.exportTable(connectionId, relation, sort, filters, limit, format, path),
+    copy: async (format, limit) => {
+      const [text, rows] = await api.copyTable(connectionId, relation, sort, filters, limit, format);
+      return { text, rows };
+    },
+  };
 
   return (
     <div className="table-view" ref={root}>
@@ -395,17 +399,9 @@ export function TableView({ connectionId, relation, follow, onOpen, onPin }: Pro
           </button>
         )}
         {tab === "data" && (
-          <ExportMenu
-            disabled={!meta}
-            onDone={setNotice}
-            note={filters.length > 0 ? "All rows that match the filters." : "All rows, in the grid's order."}
-            items={[
-              { label: "CSV…", run: () => exportTable("csv") },
-              { label: "CSV for spreadsheets…", run: () => exportTable("spreadsheet_csv") },
-              { label: "JSON…", run: () => exportTable("json") },
-              { label: "INSERT statements…", run: () => exportTable("insert") },
-            ]}
-          />
+          <button className="ghost" disabled={!meta} onClick={() => setExporting(true)} title="Export rows as CSV, JSON, INSERT statements…">
+            Export
+          </button>
         )}
         {tab === "data" && <RowPaneButton />}
       </div>
@@ -527,6 +523,8 @@ export function TableView({ connectionId, relation, follow, onOpen, onPin }: Pro
           </div>
         </div>
       )}
+
+      {exporting && <ExportDialog source={exportSource} onDone={setNotice} onClose={() => setExporting(false)} />}
 
       <footer className="status pager" title={tab === "data" && meta ? `${meta.sql}\n⌘R reloads` : undefined}>
         {tab === "data" && meta && (

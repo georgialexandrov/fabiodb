@@ -13,6 +13,7 @@ import {
   workspaceDatabase,
   workspaceId,
   compactCount,
+  fileName,
   sameRelation,
   type AuditEntry,
   type Discovery,
@@ -44,6 +45,7 @@ const AGENT_RECENT_MS = 10 * 60_000;
 // Loaded when first used, so the first paint only waits for the shell.
 const CommandPalette = lazyComponent(() => import("./CommandPalette").then((m) => m.CommandPalette));
 const ConnectionForm = lazyComponent(() => import("./ConnectionForm").then((m) => m.ConnectionForm));
+const DumpDialog = lazyComponent(() => import("./DumpDialog").then((m) => m.DumpDialog));
 const DiscoverDialog = lazyComponent(() => import("./DiscoverDialog").then((m) => m.DiscoverDialog));
 const DiagramView = lazyComponent(() => import("./DiagramView").then((m) => m.DiagramView));
 const InsightsView = lazyComponent(() => import("./InsightsView").then((m) => m.InsightsView));
@@ -97,6 +99,8 @@ export default function App() {
   // ⌘D: the databases on the current server, to switch between.
   const [databases, setDatabases] = useState<string[] | null>(null);
   const [discovered, setDiscovered] = useState<{ folder: string; discovery: Discovery } | null>(null);
+  /** Export or import a whole database (the workspace on screen). */
+  const [dumping, setDumping] = useState<"export" | "import" | null>(null);
   const [snippets, setSnippets] = useState<Snippet[]>([]);
 
   // Snippets are saved from query tabs; read them fresh whenever ⌘K opens.
@@ -316,6 +320,8 @@ export default function App() {
       "open-sqlite": () => chooseSqlite().catch((e) => setError(String(e))),
       "scan-folder": () => scanFolder().catch((e) => setError(String(e))),
       "new-query": () => newQuery(),
+      "export-database": () => activeId && setDumping("export"),
+      "import-database": () => activeId && setDumping("import"),
       "close-tab": () => current && closeTab(current),
       palette: () => setPalette(true),
       switcher: () => setSwitcher(true),
@@ -413,6 +419,8 @@ export default function App() {
           { id: "diagram", label: "Diagram", hint: active.name, run: openDiagram },
           ...(active.target.engine === "postgres" ? [{ id: "insights", label: "Insights", hint: active.name, run: openInsights }] : []),
           { id: "agent", label: "Agent activity", hint: active.name, run: () => openAgent(active.id) },
+          { id: "export-database", label: "Export database…", hint: active.name, run: () => setDumping("export") },
+          { id: "import-database", label: "Import into database…", hint: active.name, run: () => setDumping("import") },
           { id: "edit", label: `Edit connection “${active.name}”`, run: () => setEditing(active) },
           ...(active.target.engine === "postgres"
             ? [{ id: "databases", label: "Switch database…", hint: active.name, shortcut: "⌘D", run: pickDatabase }]
@@ -742,6 +750,22 @@ export default function App() {
         />
       )}
 
+      {dumping && active && activeId && (
+        <DumpDialog
+          mode={dumping}
+          id={activeId}
+          engine={active.target.engine}
+          name={active.target.engine === "postgres" ? (activeDatabase ?? active.target.database) : fileName(active.target.path)}
+          schemas={schemaNames}
+          activeSchema={activeSchema}
+          onImported={() => {
+            const id = activeId;
+            api.relations(id).then((rels) => setRelations((r) => ({ ...r, [id]: rels })), () => {});
+            api.completionSchema(id).then((s) => setSchemas((all) => ({ ...all, [id]: s })), () => {});
+          }}
+          onClose={() => setDumping(null)}
+        />
+      )}
       {discovered && (
         <DiscoverDialog
           folder={discovered.folder}
